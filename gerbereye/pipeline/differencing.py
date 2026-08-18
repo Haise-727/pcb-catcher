@@ -30,8 +30,21 @@ class DiffRegion:
     # on the differencing-only path, where regions are anonymous.
     ref_des: str | None = None
 
+    # Populated by the classifier, which only the CAD path can run -- it needs
+    # the golden region for this specific component to compare against.
+    defect_class: str | None = None
+    confidence: float | None = None
+    detail: str | None = None
+
     def as_dict(self) -> dict:
-        return {"bbox": list(self.bbox), "area_px": self.area_px, "ref_des": self.ref_des}
+        return {
+            "bbox": list(self.bbox),
+            "area_px": self.area_px,
+            "ref_des": self.ref_des,
+            "defect_class": self.defect_class,
+            "confidence": self.confidence,
+            "detail": self.detail,
+        }
 
 
 @dataclass

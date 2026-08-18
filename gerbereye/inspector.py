@@ -21,7 +21,7 @@ import numpy as np
 
 from . import config, db, logging_setup
 from .capture import Camera, save_frame
-from .pipeline import differencing, registration, verdict
+from .pipeline import classify, differencing, footprints, registration, verdict
 
 # Marker positions on the jig, in design millimetres. Measured once when the
 # jig is built (issue #5) and constant thereafter. Overridden per board type
@@ -56,6 +56,26 @@ class InspectionOutcome:
             "degraded": self.degraded,
             "message": self.message,
         }
+
+
+def _estimate_px_per_mm(homography: np.ndarray) -> float | None:
+    """Image scale implied by the registration transform.
+
+    BR-04's offset threshold is defined against the package's physical size, so
+    converting it to pixels needs this. Derived from the homography rather than
+    configured, because it changes whenever the camera height does.
+    """
+    try:
+        origin = cv2.perspectiveTransform(
+            np.array([[[0.0, 0.0]]], dtype=np.float32), homography
+        )[0][0]
+        unit = cv2.perspectiveTransform(
+            np.array([[[1.0, 0.0]]], dtype=np.float32), homography
+        )[0][0]
+        scale = float(np.hypot(unit[0] - origin[0], unit[1] - origin[1]))
+        return scale if scale > 0 else None
+    except cv2.error:
+        return None
 
 
 class InspectionError(RuntimeError):
@@ -133,6 +153,22 @@ def run_inspection(
                 regions = registration.name_regions(regions, boxes)
                 # One row per component, not one per contour fragment.
                 regions = registration.merge_regions_by_component(regions)
+
+            # Classification needs the golden region for each specific
+            # component, so it only runs on the CAD path.
+            with timer.stage("classification"):
+                index = {
+                    c["ref_des"]: {**c, "package_mm": footprints.extent_for(c)}
+                    for c in components
+                }
+                regions = classify.classify_regions(
+                    regions,
+                    live=frame,
+                    golden=golden,
+                    component_boxes=boxes,
+                    component_index=index,
+                    px_per_mm=_estimate_px_per_mm(result.homography),
+                )
             path_used = "cad"
             degraded = result.state is registration.RegistrationState.DEGRADED
             if degraded:

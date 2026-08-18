@@ -24,7 +24,7 @@ from typing import Any, Iterable
 
 from . import config
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS schema_meta (
@@ -89,7 +89,13 @@ CREATE TABLE IF NOT EXISTS region_verdict (
     inspection_id INTEGER NOT NULL REFERENCES inspection(id),
     bbox_json     TEXT    NOT NULL,
     ref_des       TEXT,
-    area_px       INTEGER NOT NULL
+    area_px       INTEGER NOT NULL,
+    -- What is wrong with the component, not merely that something is
+    -- (FR-012/013/014). Null on the differencing-only path, which has no
+    -- reference geometry to classify against.
+    defect_class  TEXT,
+    confidence    REAL,
+    detail        TEXT
 );
 
 -- A correction is a new row here. The original region_verdict is never edited.
@@ -137,6 +143,17 @@ def _migrate(conn: sqlite3.Connection) -> None:
     existing = {row["name"] for row in conn.execute("PRAGMA table_info(component)")}
     if existing and "dnp" not in existing:
         conn.execute("ALTER TABLE component ADD COLUMN dnp INTEGER NOT NULL DEFAULT 0")
+        conn.commit()
+
+    verdict_columns = {row["name"] for row in conn.execute("PRAGMA table_info(region_verdict)")}
+    if verdict_columns:
+        for column, ddl in (
+            ("defect_class", "ALTER TABLE region_verdict ADD COLUMN defect_class TEXT"),
+            ("confidence", "ALTER TABLE region_verdict ADD COLUMN confidence REAL"),
+            ("detail", "ALTER TABLE region_verdict ADD COLUMN detail TEXT"),
+        ):
+            if column not in verdict_columns:
+                conn.execute(ddl)
         conn.commit()
 
 
@@ -326,10 +343,18 @@ def record_inspection(
     )
     inspection_id = int(cur.lastrowid)
     conn.executemany(
-        "INSERT INTO region_verdict (inspection_id, bbox_json, ref_des, area_px)"
-        " VALUES (?, ?, ?, ?)",
+        "INSERT INTO region_verdict (inspection_id, bbox_json, ref_des, area_px,"
+        " defect_class, confidence, detail) VALUES (?, ?, ?, ?, ?, ?, ?)",
         [
-            (inspection_id, json.dumps(r["bbox"]), r.get("ref_des"), int(r["area_px"]))
+            (
+                inspection_id,
+                json.dumps(r["bbox"]),
+                r.get("ref_des"),
+                int(r["area_px"]),
+                r.get("defect_class"),
+                r.get("confidence"),
+                r.get("detail"),
+            )
             for r in regions
         ],
     )
@@ -354,7 +379,8 @@ def list_regions(conn: sqlite3.Connection, inspection_id: int) -> list[dict[str,
     while still letting callers read current state in one hop.
     """
     rows = conn.execute(
-        "SELECT r.id, r.bbox_json, r.ref_des, r.area_px,"
+        "SELECT r.id, r.bbox_json, r.ref_des, r.area_px, r.defect_class,"
+        "       r.confidence, r.detail,"
         "       (SELECT o.revised_verdict FROM override o"
         "         WHERE o.region_verdict_id = r.id ORDER BY o.id DESC LIMIT 1) AS revised"
         " FROM region_verdict r WHERE r.inspection_id = ? ORDER BY r.id",
@@ -368,6 +394,9 @@ def list_regions(conn: sqlite3.Connection, inspection_id: int) -> list[dict[str,
                 "bbox": json.loads(r["bbox_json"]),
                 "ref_des": r["ref_des"],
                 "area_px": r["area_px"],
+                "defect_class": r["defect_class"],
+                "confidence": r["confidence"],
+                "detail": r["detail"],
                 "verdict": r["revised"] or "defect",
                 "overridden": r["revised"] is not None,
             }
