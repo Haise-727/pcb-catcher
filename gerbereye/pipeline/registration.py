@@ -21,6 +21,8 @@ from enum import Enum
 import cv2
 import numpy as np
 
+from . import footprints
+
 # 4x4_50 is the smallest dictionary that comfortably covers four markers.
 # Smaller dictionaries decode more reliably at low resolution.
 ARUCO_DICT = cv2.aruco.DICT_4X4_50
@@ -137,33 +139,34 @@ def project_components(
     homography: np.ndarray,
     components: list[dict],
     roi_scale: float = 1.20,
-    default_size_mm: float = 3.0,
 ) -> dict[str, tuple[int, int, int, int]]:
     """Map each component's design coordinate to a pixel bounding box.
 
-    Package dimensions are not in the pick-and-place file, so every component
-    gets the same nominal box scaled by roi_scale (BR-03). That is coarse but
-    sufficient for naming which component a defect region falls inside, which
-    is all the MVP overlay needs.
+    Box size comes from the component's actual package footprint scaled by
+    roi_scale (BR-03). A single nominal size for every part does not work: it
+    is larger than an 0402 and much smaller than a SOIC-14, so defects at the
+    edge of a large IC fall outside their own box and come back unnamed.
 
     Returns {ref_des: (x, y, w, h)} in pixel coordinates.
     """
     if not components:
         return {}
 
-    half = (default_size_mm * roi_scale) / 2.0
     boxes: dict[str, tuple[int, int, int, int]] = {}
 
     # Project all four corners of each component's box, then take the axis
     # aligned bounds -- a rotated board makes the projected box non-rectangular.
     for component in components:
         x_mm, y_mm = component["x_mm"], component["y_mm"]
+        extent_x, extent_y = footprints.extent_for(component)
+        half_x = (extent_x * roi_scale) / 2.0
+        half_y = (extent_y * roi_scale) / 2.0
         corners = np.array(
             [
-                [x_mm - half, y_mm - half],
-                [x_mm + half, y_mm - half],
-                [x_mm + half, y_mm + half],
-                [x_mm - half, y_mm + half],
+                [x_mm - half_x, y_mm - half_y],
+                [x_mm + half_x, y_mm - half_y],
+                [x_mm + half_x, y_mm + half_y],
+                [x_mm - half_x, y_mm + half_y],
             ],
             dtype=np.float32,
         ).reshape(-1, 1, 2)
@@ -178,31 +181,52 @@ def project_components(
 def name_regions(
     regions: list, component_boxes: dict[str, tuple[int, int, int, int]]
 ) -> list:
-    """Attach a reference designator to each defect region, where one overlaps.
+    """Attach a reference designator to each defect region.
 
     This is the join that turns an anonymous differencing result into a named
     one: the region says *where* something changed, the component map says
-    *what* should be there. A region matching no component keeps ref_des None
-    rather than being dropped -- an unexplained change is still worth showing
-    the operator.
+    *what* should be there.
+
+    Attribution is by **overlap area**, not by whether the region's centre sits
+    inside a box. An offset component produces a region spanning both its
+    intended and actual position, so its centre can land outside the footprint
+    entirely while still clearly belonging to that part. Centre-testing misses
+    exactly the defect class that most needs naming.
+
+    Where nothing overlaps, the region is left unnamed rather than guessed at.
+    An unexplained change is still worth showing the operator, but inventing a
+    designator for it would blame a part that may be perfectly fine.
     """
     for region in regions:
         rx, ry, rw, rh = region.bbox
-        region_centre = (rx + rw / 2.0, ry + rh / 2.0)
+        r_x2, r_y2 = rx + rw, ry + rh
 
-        best_ref, best_distance = None, float("inf")
+        best_ref = None
+        best_overlap = 0.0
+        best_distance = float("inf")
+
         for ref_des, (cx, cy, cw, ch) in component_boxes.items():
-            inside = cx <= region_centre[0] <= cx + cw and cy <= region_centre[1] <= cy + ch
-            if not inside:
+            c_x2, c_y2 = cx + cw, cy + ch
+
+            # Axis-aligned intersection area.
+            overlap_w = min(r_x2, c_x2) - max(rx, cx)
+            overlap_h = min(r_y2, c_y2) - max(ry, cy)
+            if overlap_w <= 0 or overlap_h <= 0:
                 continue
-            # Several component boxes can overlap on a dense board; the nearest
-            # centre is the most defensible attribution.
-            component_centre = (cx + cw / 2.0, cy + ch / 2.0)
+            overlap = float(overlap_w * overlap_h)
+
+            # Several boxes can overlap one region on a dense board. Prefer the
+            # largest overlap; break ties on centre distance, which favours the
+            # part the region actually sits on rather than a large neighbour
+            # that happens to extend across it.
             distance = float(
-                np.hypot(region_centre[0] - component_centre[0], region_centre[1] - component_centre[1])
+                np.hypot(
+                    (rx + rw / 2.0) - (cx + cw / 2.0),
+                    (ry + rh / 2.0) - (cy + ch / 2.0),
+                )
             )
-            if distance < best_distance:
-                best_ref, best_distance = ref_des, distance
+            if overlap > best_overlap or (overlap == best_overlap and distance < best_distance):
+                best_ref, best_overlap, best_distance = ref_des, overlap, distance
 
         region.ref_des = best_ref
 
