@@ -1,0 +1,10 @@
+# Runtime dependencies. Every entry is MIT / Apache-2.0 / BSD / public domain
+# so an MSME can deploy without inheriting a copyleft obligation (ADR-006).
+fastapi==0.115.6         # MIT
+uvicorn[standard]==0.34.0  # BSD-3-Clause
+opencv-python==4.10.0.84   # Apache-2.0
+numpy==2.2.1               # BSD-3-Clause
+pydantic==2.10.4           # MIT
+
+# Gerber / pick-and-place parsing (ADR-006: pygerber is MIT).
+pygerber==2.4.3

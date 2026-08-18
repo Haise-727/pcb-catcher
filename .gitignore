@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+
+# Node
+node_modules/
+web/dist/
+
+# Runtime data — inspection records and captured images are local-only
+# and can contain customer design IP (NFR-011). Never commit them.
+data/*.db
+data/*.db-wal
+data/*.db-shm
+data/images/
+data/golden/
+
+# OS
+.DS_Store
