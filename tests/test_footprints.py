@@ -140,3 +140,31 @@ def test_largest_overlap_wins_when_boxes_compete():
     region = DiffRegion(bbox=(120, 100, 40, 20), area_px=800)
     named = registration.name_regions([region], boxes)
     assert named[0].ref_des == "R2"
+
+
+# --------------------------------------------------------------------------
+# Connectors
+# --------------------------------------------------------------------------
+
+@pytest.mark.parametrize(
+    "footprint,min_len",
+    [("Conn_2P", 5.0), ("Conn_01x04", 10.0), ("PinHeader_1x08", 20.0)],
+)
+def test_connector_length_grows_with_pin_count(footprint, min_len):
+    """Connectors are among the largest parts on a board; the 3mm nominal
+    would badly under-cover them."""
+    (length, _width), matched = footprints.lookup(footprint)
+    assert matched
+    assert length >= min_len
+
+
+def test_connector_part_number_digits_are_not_read_as_pins():
+    """Regression: 'Molex_53398-0571' parsed to 53398 pins, giving a 135-metre
+    box that would swallow the board and steal every defect region."""
+    (length, _width), _ = footprints.lookup("Molex_53398-0571")
+    assert length < 50.0
+
+
+def test_implausible_pin_count_falls_back_rather_than_trusting_it():
+    (length, _), _ = footprints.lookup("Conn_99999P")
+    assert length < 50.0

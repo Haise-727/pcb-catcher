@@ -104,6 +104,48 @@ def _pin_count(pattern: re.Pattern, name: str) -> int | None:
     return None
 
 
+_CONNECTOR = re.compile(r"conn|hdr|header|pinhdr|jst|molex|terminal|screw", re.I)
+# Pin count as written on connector footprints: "2P", "1x04", "_04x", "-4".
+_CONNECTOR_PINS = re.compile(r"(\d+)\s*p\b|(\d+)x(\d+)|[-_](\d+)(?:[-_]|$)", re.I)
+CONNECTOR_PITCH_MM = 2.54
+CONNECTOR_BODY_MM = 5.0
+# Sanity bound on a parsed pin count. Vendor part numbers are full of digits --
+# "Molex_53398-0571" parses to 53398 "pins" if taken literally, producing a
+# 135-metre box that would swallow the board and steal every defect region.
+# Anything beyond this is a part number, not a pin count.
+CONNECTOR_MAX_PINS = 80
+CONNECTOR_DEFAULT_PINS = 2
+
+
+def _connector_dims(name: str) -> tuple[float, float] | None:
+    """Size a connector from its pin count.
+
+    Connectors vary enormously and are among the largest things on a board, so
+    falling back to the 3mm nominal would badly under-cover them.
+    """
+    if not _CONNECTOR.search(name):
+        return None
+    match = _CONNECTOR_PINS.search(name)
+    pins = CONNECTOR_DEFAULT_PINS
+    if match:
+        groups = [g for g in match.groups() if g]
+        try:
+            if len(groups) >= 2:
+                pins = int(groups[0]) * int(groups[1])
+            elif groups:
+                pins = int(groups[0])
+        except ValueError:
+            pins = CONNECTOR_DEFAULT_PINS
+
+    # An implausible count means the digits came from a part number. Fall back
+    # rather than trusting it -- an oversized box is far more damaging than a
+    # slightly small one, because it captures its neighbours' defects too.
+    if not 1 <= pins <= CONNECTOR_MAX_PINS:
+        pins = CONNECTOR_DEFAULT_PINS
+
+    return round(pins * CONNECTOR_PITCH_MM + 1.5, 2), CONNECTOR_BODY_MM
+
+
 def lookup(footprint: str | None) -> tuple[tuple[float, float], bool]:
     """Body dimensions for a footprint name.
 
@@ -121,6 +163,10 @@ def lookup(footprint: str | None) -> tuple[tuple[float, float], bool]:
     chip = _CHIP_CODE.search(name)
     if chip:
         return _CHIP_PASSIVES[chip.group(1)], True
+
+    connector = _connector_dims(name)
+    if connector is not None:
+        return connector, True
 
     # Quad packages: pins spread over four sides.
     for pattern, pitch in _QUAD_FAMILIES:
