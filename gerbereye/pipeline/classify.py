@@ -98,6 +98,43 @@ ROTATION_CANDIDATES = (90.0, 180.0, 270.0, 30.0, 45.0, 60.0)
 # and a correctly-placed symmetric part gets reported as rotated.
 ROTATION_MARGIN = 0.06
 
+# How far a rotated match may sit from the expected position, as a multiple of
+# the component's own size, before it is disbelieved.
+#
+# This guard is essential on a dense board. A panel of identical 0603s means the
+# search window is full of parts that look exactly like the template, so a
+# rotated template will happily match a *neighbour* and score highly -- making a
+# genuinely missing component report as rotated. A part that has actually turned
+# has not also travelled, so a distant match is evidence of the wrong component,
+# not a rotated one.
+ROTATION_MAX_DRIFT = 1.0
+
+# Upper bound on a displacement still called an offset, as a multiple of the
+# component's own size.
+#
+# BR-04 sets a lower bound but no upper one, and physically there has to be
+# one. At a full component length the part no longer overlaps its intended
+# footprint at all -- it is not sitting badly, it is somewhere else, and its
+# own pads are bare.
+#
+# This also settles the dense-board case. Identical 0603s sit 2.5mm apart on a
+# tight layout, so a template will match a neighbour that looks exactly like
+# it; without this bound a genuinely missing part reports as offset, blaming a
+# component that is simply not there.
+OFFSET_MAX_FACTOR = 1.0
+
+# Match quality required before a displacement is called an offset.
+#
+# This is the primary defence against neighbour confusion, and it separates the
+# two cases far more cleanly than distance does. A genuinely displaced part is
+# the *same part*, so it matches its own template almost perfectly -- measured
+# 0.98-1.00 across real and synthetic offsets. A template landing on a
+# lookalike neighbour only partially overlaps it and scores 0.41-0.62.
+#
+# Below this bar we have not actually found the component, so the honest answer
+# is that it is missing rather than displaced.
+OFFSET_MIN_SCORE = 0.80
+
 # Templates below this are too small to match meaningfully.
 MIN_TEMPLATE_PX = 6
 
@@ -252,12 +289,23 @@ def classify_component(
     # --- Rotated ----------------------------------------------------------
     # Tested before displacement: a rotated part still sits on its pads, so it
     # would otherwise read as present or slightly offset.
+    # Rotation is only believed when the match lands on this component rather
+    # than on an identical neighbour -- see ROTATION_MAX_DRIFT.
+    drift_limit = max(bbox[2], bbox[3]) * ROTATION_MAX_DRIFT
     best_rotation, best_rotation_score = None, -1.0
     for angle in ROTATION_CANDIDATES:
         rotated = _rotate(template_grey, angle)
         match = _best_match(window_grey, rotated)
-        if match and match[0] > best_rotation_score:
-            best_rotation, best_rotation_score = angle, match[0]
+        if not match:
+            continue
+        score, centre = match
+        drift = float(np.hypot(
+            centre[0] - expected_centre[0], centre[1] - expected_centre[1]
+        ))
+        if drift > drift_limit:
+            continue
+        if score > best_rotation_score:
+            best_rotation, best_rotation_score = angle, score
 
     if (
         best_rotation is not None
@@ -294,6 +342,20 @@ def classify_component(
     else:
         limit_px = OFFSET_FRACTION * min(bbox[2], bbox[3])
     limit_px = max(limit_px, 2.0)
+
+    # Displaced, or a lookalike neighbour? Two independent guards, because
+    # getting this wrong sends a technician to reposition a component that is
+    # simply not there.
+    max_shift_px = max(bbox[2], bbox[3]) * OFFSET_MAX_FACTOR
+    if shift_px > limit_px and (
+        upright_score < OFFSET_MIN_SCORE or shift_px > max_shift_px
+    ):
+        return Classification(
+            DefectClass.ABSENT, 0.7,
+            f"component not found at its position; the nearest match scores "
+            f"{upright_score:.2f} at {shift_px:.0f}px away and is likely a "
+            f"neighbouring part",
+        )
 
     if shift_px > limit_px:
         confidence = float(min(1.0, 0.55 + (shift_px / limit_px - 1.0) * 0.2))

@@ -204,3 +204,72 @@ def test_named_regions_receive_class_confidence_and_detail(golden):
     assert region.defect_class == DefectClass.ABSENT.value
     assert region.confidence is not None
     assert region.detail
+
+
+# --------------------------------------------------------------------------
+# Dense boards — where identical neighbours confuse a template matcher
+# --------------------------------------------------------------------------
+
+# Spacing mirrors a real tight layout: 0603 parts on a 2.5mm pitch means the
+# gap between neighbours is about 1.3x the inspected footprint. Packing them
+# tighter than that would make the footprint boxes overlap, which does not
+# happen on a real board and would test something else entirely.
+DENSE_PITCH = 52
+DENSE_CENTRES = (48, 100, 152, 204)
+
+
+def make_dense_board(missing=None):
+    """A row of identical parts on a realistic tight pitch.
+
+    This is the case that breaks naive template matching: every part looks
+    exactly like every other, so a template will happily match a neighbour.
+    """
+    board = make_board()
+    for index, cx in enumerate(DENSE_CENTRES):
+        if missing is not None and index == missing:
+            continue
+        draw_part(board, cx, 120, w=30, h=16)
+    return board
+
+
+DENSE_BBOX = (100 - 20, 120 - 12, 40, 24)   # footprint of the part at x=100
+
+
+def test_missing_part_among_identical_neighbours_is_absent_not_offset():
+    """The dense-board failure.
+
+    A missing 0603 surrounded by identical 0603s produced a confident 'offset'
+    -- the matcher found a neighbour that looked exactly like the template and
+    reported the part as displaced. That blames a component which is simply not
+    there, and sends a technician to reposition something that is missing.
+    """
+    golden_board = make_dense_board()
+    live = make_dense_board(missing=1)   # the part at x=100 removed
+
+    result = classify.classify_component(
+        live, golden_board, DENSE_BBOX, package_mm=(2.0, 1.25), px_per_mm=PX_PER_MM
+    )
+    assert result.defect is DefectClass.ABSENT
+
+
+def test_offset_bound_is_a_full_component_length():
+    """At a full component length the part no longer overlaps its own
+    footprint, so it is somewhere else rather than badly placed."""
+    assert classify.OFFSET_MAX_FACTOR <= 1.0
+
+
+def test_rotation_match_far_from_expected_position_is_disbelieved():
+    """A part that has turned has not also travelled. A distant rotated match
+    is evidence of the wrong component, not a rotated one."""
+    assert classify.ROTATION_MAX_DRIFT <= 1.0
+
+
+def test_offset_requires_a_strong_match():
+    """Match quality is the primary defence against neighbour confusion.
+
+    A genuinely displaced part is the same part, so it matches its own template
+    almost perfectly (measured 0.98-1.00). A template landing on a lookalike
+    neighbour only partially overlaps and scores 0.41-0.62. The gate sits
+    between those populations.
+    """
+    assert 0.62 < classify.OFFSET_MIN_SCORE < 0.98
