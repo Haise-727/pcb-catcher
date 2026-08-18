@@ -30,6 +30,17 @@ from gerbereye.pipeline import bom, footprints, placement
 BOARD_TYPE_NAME = "Demo Board (60x40mm)"
 
 
+def mk_px_per_mm() -> float:
+    """Image scale of the generated boards.
+
+    Known exactly here because the generator draws them, so there is no need to
+    derive it from a homography as the live path does.
+    """
+    from tools.make_demo_boards import PX_PER_MM
+
+    return float(PX_PER_MM)
+
+
 def main() -> int:
     print("Preparing demo station\n")
 
@@ -77,6 +88,19 @@ def main() -> int:
             + (f", unmatched: {', '.join(coverage['unmatched_designators'])}"
                if coverage["unmatched"] else "")
         )
+
+        # Set a noise threshold suited to the smallest part on this board.
+        # The 120px2 default is sized for 0805; this board carries 0603s, whose
+        # removal changes only ~108px2, so the default would silently miss them
+        # and report PASS (issue #46). The station warns about this at
+        # inspection time, but a demo should not open on a warning.
+        detectable = footprints.minimum_detectable_area_px(inspectable, mk_px_per_mm())
+        if detectable:
+            ref_des, area_px = detectable
+            recommended = max(int(area_px * 0.6), 20)
+            db.update_thresholds(conn, board_type_id, min_region_area=recommended)
+            print(f"  threshold   min_region_area={recommended} "
+                  f"(smallest part {ref_des} changes ~{area_px:.0f}px2)")
 
         # Golden reference, captured from the correctly-assembled render via
         # the same code path a real capture uses.
