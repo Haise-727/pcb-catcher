@@ -5,6 +5,7 @@ import DefectList from './components/DefectList'
 import DemoBar from './components/DemoBar'
 import History from './components/History'
 import Trends from './components/Trends'
+import Settings from './components/Settings'
 import * as api from './api'
 
 export default function App() {
@@ -361,6 +362,12 @@ export default function App() {
             >
               Trends
             </button>
+            <button
+              className={panel === 'settings' ? 'active' : ''}
+              onClick={() => setPanel('settings')}
+            >
+              Settings
+            </button>
           </div>
 
           {panel === 'defects' && (
@@ -370,6 +377,14 @@ export default function App() {
             <History inspections={inspections} onSelect={handleSelectInspection} />
           )}
           {panel === 'trends' && <Trends trends={trends} />}
+          {panel === 'settings' && (
+            <Settings
+              boardTypeId={boardTypeId}
+              busy={busy}
+              onNotice={setNotice}
+              onError={setError}
+            />
+          )}
         </aside>
       </div>
     </div>
