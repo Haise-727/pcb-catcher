@@ -32,15 +32,21 @@ Commercial automated optical inspection (AOI) machines solve this. They also cos
 An operator places an assembled board. Within a few seconds the screen outlines every deviation from the design and **names it by reference designator** — `C14 missing`, `U3 rotated 180°` — and writes a permanent local record of the board.
 
 > [!NOTE]
-> **The MVP framework is built and running.** Path A (golden-board differencing) works end to end: capture → compare → named defect list → override → local record. Path B (CAD registration) projects pick-and-place coordinates onto the live frame via printed ArUco markers.
+> **Working end to end, with no hardware required.** `python tools/seed_demo.py` then `GERBEREYE_DEMO=1 python run.py` gives a running inspection station: place a board, trigger, and see defects named by reference designator and classified as missing, rotated or offset — with a magnified crop, one-click override, recurring-defect trends and a CSV record.
 >
-> Eight phases of inception documentation sit behind it, alongside five [Claude Code skills](.claude/skills/). Where the build deliberately narrows the spec for the 8-hour round, [`docs/implementation-notes.md`](docs/implementation-notes.md) records what and why.
+> Eight phases of inception documentation sit behind it, alongside five [Claude Code skills](.claude/skills/). [`docs/implementation-notes.md`](docs/implementation-notes.md) records where the build narrows the spec and why.
 
 ## Running it
 
 ```bash
 python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
+
+# No camera? Generate the demo boards and a ready-to-inspect station:
+.venv/bin/python tools/seed_demo.py
+GERBEREYE_DEMO=1 .venv/bin/python run.py
+
+# With hardware:
 .venv/bin/python run.py                 # API + UI on 127.0.0.1:8000
 ```
 
@@ -60,7 +66,8 @@ Optionally load a pick-and-place file to get defects named by reference designat
 .venv/bin/python tools/bench_stability.py --samples 100   # gate: < 2 grey levels
 .venv/bin/python tools/make_markers.py                    # printable ArUco sheet
 .venv/bin/python tools/detect_markers.py --samples 20     # verify marker detection
-.venv/bin/python -m pytest tests/ -q                      # 30 tests
+.venv/bin/python tools/bench_latency.py --runs 200        # NFR-001 histogram
+.venv/bin/python -m pytest tests/ -q                      # 108 tests
 ```
 
 ---
@@ -118,9 +125,11 @@ Detect fiducials (or the board outline) in the live frame, solve a homography, a
 
 Registration error propagates into every region. A 5 px error on an 0402 package is a large fraction of the component — it *manufactures* false calls at the smallest sizes.
 
-### 3. Classify with classical features, not a neural net
+### 3. Classify by searching for the golden crop
 
-Five outcomes per component: **present · absent · misaligned · rotated · polarity-reversed.**
+Four outcomes per component: **present · absent · offset · rotated.**
+
+Classification is a search rather than a judgement. The golden board supplies a template for every component, so the question is never *"what is this?"* but *"where did this go, if anywhere?"* — not found nearby is `absent`, found displaced is `offset`, found only when rotated is `rotated`. Each finding reports the measurement behind it, e.g. *"component sits 26.1px (1.63mm) from its intended position"*.
 
 The latency budget allows **~6 ms per component** on a CPU with no GPU. Template matching, edge density and colour statistics fit comfortably. A per-component CNN does not — and there is no public labelled assembly-defect dataset to train one on anyway (the well-known PCB datasets are *bare-board trace* defects, a different problem at a different manufacturing stage). See [ADR-003](docs/inception/adrs/ADR-003-classical-cv-hot-path.md).
 
@@ -265,6 +274,7 @@ The high-volatility thresholds — ROI scale ×1.20, offset >25%, rotation >15°
 | [_id-registry.md](docs/inception/_id-registry.md) | Append-only registry of every ID ever allocated |
 | [implementation-notes.md](docs/implementation-notes.md) | Where the built code deliberately narrows the spec for the 8-hour round, and the condition that restores each |
 | [pipeline-status.md](docs/pipeline-status.md) | What is built, what is blocked on what, and why frame stability gates the threshold work |
+| [demo-script.md](docs/demo-script.md) | The 90-second jury walkthrough, expected questions, and what to do when something breaks |
 | [.claude/skills/](.claude/skills/) | Five skills — domain, inspection pipeline, conventions, ADR format, testing — that load this context into a coding session |
 
 ---
