@@ -76,5 +76,23 @@ export const getInspection = (id) => request(`/api/inspections/${id}`)
 export const getTrends = (boardTypeId, limit = 12) =>
   request(`/api/trends?board_type_id=${boardTypeId}&limit=${limit}`)
 
+export const getThresholds = (boardTypeId) =>
+  request(`/api/board-types/${boardTypeId}/thresholds`)
+
+export const updateThresholds = (boardTypeId, values) =>
+  request('/api/board-types/thresholds', {
+    method: 'PATCH',
+    body: JSON.stringify({
+      board_type_id: boardTypeId,
+      diff_intensity: Number(values.diff_intensity),
+      min_region_area: Number(values.min_region_area),
+      blur_kernel: Number(values.blur_kernel),
+      roi_scale: Number(values.roi_scale),
+    }),
+  })
+
+export const getStorage = () => request('/api/storage')
+export const sweepStorage = () => request('/api/storage/sweep', { method: 'POST' })
+
 export const checkStability = (samples = 50) =>
   request(`/api/camera/stability?samples=${samples}`)

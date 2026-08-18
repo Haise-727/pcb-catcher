@@ -258,3 +258,42 @@ body {
 .trend-bar { height: 6px; background: var(--panel); border-radius: 3px; overflow: hidden; margin-top: 5px; }
 .trend-fill { height: 100%; background: linear-gradient(90deg, var(--fail), #ff8a5c); border-radius: 3px; }
 .trend-classes { display: block; margin-top: 5px; font-size: 11px; color: var(--muted); }
+
+/* Settings. Threshold tuning is exposed because retuning without a rebuild is
+ * an architectural driver (NFR-013), and demonstrating it is far more
+ * convincing than asserting it. */
+.settings { display: flex; flex-direction: column; gap: 22px; }
+.settings h3 {
+  font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em;
+  color: var(--muted); margin: 0 0 8px;
+}
+.settings-note { font-size: 11px; color: var(--muted); line-height: 1.45; margin: 0 0 12px; }
+.setting-row {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  gap: 12px; padding: 9px 0; border-bottom: 1px solid var(--border);
+}
+.setting-label { display: flex; flex-direction: column; gap: 3px; font-size: 12px; flex: 1; }
+.setting-hint { font-size: 10px; color: var(--muted); line-height: 1.4; }
+.setting-row input {
+  width: 82px; flex-shrink: 0; background: var(--panel); color: var(--text);
+  border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px;
+  font-size: 13px; font-family: ui-monospace, Menlo, monospace;
+}
+.setting-row input:focus { outline: none; border-color: var(--accent); }
+.settings-save {
+  margin-top: 12px; width: 100%; padding: 9px; font-size: 13px;
+  background: var(--accent); color: #fff; border: none; border-radius: 7px; cursor: pointer;
+}
+.settings-save:disabled { background: var(--panel); color: var(--muted); cursor: not-allowed; }
+.settings section > button {
+  background: var(--panel); color: var(--text); border: 1px solid var(--border);
+  border-radius: 7px; padding: 8px 12px; font-size: 13px; cursor: pointer;
+}
+.settings section > button:hover:not(:disabled) { border-color: var(--accent); }
+.settings-facts { margin: 0 0 12px; display: flex; flex-direction: column; gap: 6px; }
+.settings-facts > div { display: flex; justify-content: space-between; gap: 10px; font-size: 12px; }
+.settings-facts dt { color: var(--muted); margin: 0; }
+.settings-facts dd { margin: 0; font-family: ui-monospace, Menlo, monospace; }
+.settings-list { margin: 0; padding-left: 16px; display: flex; flex-direction: column; gap: 8px; }
+.settings-list li { font-size: 11px; color: var(--muted); line-height: 1.5; }
+.settings-list strong { color: var(--text); font-weight: 600; }
