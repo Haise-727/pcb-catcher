@@ -78,8 +78,24 @@ class ThresholdDefaults:
     roi_scale: float = 1.20
 
 
+@dataclass(frozen=True)
+class RetentionConfig:
+    """How long inspection images are kept.
+
+    Only images expire. Inspection and verdict rows are never deleted -- they
+    are the audit trail (NFR-012), and reclaiming space by dropping them would
+    turn a traceability record into a database that happens to contain history.
+    """
+
+    days: int = int(os.environ.get("GERBEREYE_RETENTION_DAYS", "30"))
+    # Run a sweep at startup. Cheap when there is nothing to do, and it means a
+    # station left running for months does not need anyone to remember.
+    sweep_on_startup: bool = True
+
+
 SERVER = ServerConfig()
 CAMERA = CameraConfig()
+RETENTION = RetentionConfig()
 THRESHOLDS = ThresholdDefaults()
 
 
