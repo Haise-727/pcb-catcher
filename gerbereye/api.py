@@ -19,7 +19,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from . import capture, config, db, demo, export, inspector
+from . import capture, config, db, demo, export, inspector, logging_setup, retention
 from .pipeline import bom, placement
 
 # Demo mode swaps where pixels come from and nothing else -- every stage
@@ -37,7 +37,18 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     station, one operator and one board at a time.
     """
     config.ensure_dirs()
+    logging_setup.setup()
     camera.open()
+
+    # Cheap when there is nothing to do, and it means a station left running
+    # for months does not depend on anyone remembering to reclaim space.
+    if config.RETENTION.sweep_on_startup:
+        conn = db.connect()
+        try:
+            retention.sweep(conn, config.RETENTION.days)
+        finally:
+            conn.close()
+
     yield
     camera.release()
 
@@ -465,6 +476,45 @@ def override(payload: OverrideRequest) -> dict[str, Any]:
         return {"override_id": override_id, "region_verdict_id": payload.region_verdict_id}
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    finally:
+        conn.close()
+
+
+# --------------------------------------------------------------------------
+# Retention
+# --------------------------------------------------------------------------
+
+@app.get("/api/storage")
+def storage_usage() -> dict[str, Any]:
+    """Image footprint and the retention window in force."""
+    conn = get_conn()
+    try:
+        return {
+            "retention_days": config.RETENTION.days,
+            **retention.usage(conn),
+            "records": retention.verdict_row_count(conn),
+        }
+    finally:
+        conn.close()
+
+
+@app.post("/api/storage/sweep")
+def run_sweep(retention_days: int | None = None) -> dict[str, Any]:
+    """Delete inspection images past the retention window.
+
+    Images only. Inspection and verdict rows are never removed -- they are the
+    audit trail, and the response reports their counts so a caller can confirm
+    nothing was lost.
+    """
+    conn = get_conn()
+    try:
+        before = retention.verdict_row_count(conn)
+        result = retention.sweep(conn, retention_days or config.RETENTION.days)
+        return {
+            **result.as_dict(),
+            "records_before": before,
+            "records_after": retention.verdict_row_count(conn),
+        }
     finally:
         conn.close()
 
