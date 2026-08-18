@@ -1,0 +1,121 @@
+/* Operator UI styling.
+ *
+ * Dark surface by choice: the station sits under a bright ring light, and a
+ * dark screen keeps the operator's eye adapted to the board rather than the
+ * monitor. Verdict state is never carried by colour alone -- every signal has
+ * a word beside it (NFR-008). */
+
+:root {
+  --bg: #16181d;
+  --panel: #1e2128;
+  --border: #2e323b;
+  --text: #e8eaed;
+  --muted: #9aa0aa;
+  --accent: #4c8dff;
+  --fail: #e5484d;
+  --pass: #46a758;
+  --warn: #f0a202;
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+}
+
+.app { padding: 16px 20px 28px; max-width: 1500px; margin: 0 auto; }
+
+.header {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 16px; padding-bottom: 14px; border-bottom: 1px solid var(--border);
+}
+.header h1 { margin: 0; font-size: 22px; letter-spacing: -0.02em; }
+.subtitle { margin: 2px 0 0; color: var(--muted); font-size: 13px; }
+
+.status-cluster { display: flex; gap: 8px; flex-wrap: wrap; }
+.chip {
+  font-size: 12px; padding: 4px 10px; border-radius: 999px;
+  border: 1px solid var(--border); background: var(--panel);
+}
+.chip-ok { color: var(--pass); border-color: #2c5433; }
+.chip-bad { color: var(--fail); border-color: #5a2b2d; }
+.chip-warn { color: var(--warn); border-color: #5c4715; }
+
+.layout {
+  display: grid; grid-template-columns: minmax(0, 1fr) 340px;
+  gap: 20px; margin-top: 18px;
+}
+@media (max-width: 1000px) { .layout { grid-template-columns: 1fr; } }
+
+.video-panel { min-width: 0; }
+.video-wrap {
+  position: relative; background: #000; border: 1px solid var(--border);
+  border-radius: 10px; overflow: hidden; line-height: 0;
+}
+.video { width: 100%; height: auto; display: block; }
+.overlay-canvas { position: absolute; inset: 0; pointer-events: none; }
+
+.controls { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.controls select, .controls button, .file-button, .link-button {
+  background: var(--panel); color: var(--text); border: 1px solid var(--border);
+  border-radius: 7px; padding: 8px 12px; font-size: 13px; cursor: pointer;
+  text-decoration: none; display: inline-flex; align-items: center;
+}
+.controls button:hover:not(:disabled), .file-button:hover:not(.disabled),
+.link-button:hover { border-color: var(--accent); }
+.controls button:disabled, .file-button.disabled { opacity: 0.45; cursor: not-allowed; }
+.file-button input { display: none; }
+
+/* The primary action is oversized on purpose: the operator triggers it
+ * hundreds of times a shift, often without looking away from the board. */
+.trigger {
+  margin-top: 12px; width: 100%; padding: 16px; font-size: 16px; font-weight: 650;
+  background: var(--accent); color: #fff; border: none; border-radius: 9px;
+  cursor: pointer;
+}
+.trigger:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.sidebar { min-width: 0; }
+.sidebar h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.08em;
+  color: var(--muted); margin: 18px 0 8px; }
+
+.verdict {
+  display: flex; flex-direction: column; gap: 3px;
+  padding: 14px 16px; border-radius: 9px; border: 1px solid var(--border);
+}
+.verdict-word { font-size: 26px; font-weight: 700; letter-spacing: -0.02em; }
+.verdict-meta { font-size: 12px; color: var(--muted); }
+.verdict-pass { background: #14261a; border-color: #2c5433; }
+.verdict-pass .verdict-word { color: var(--pass); }
+.verdict-fail { background: #2a1618; border-color: #5a2b2d; }
+.verdict-fail .verdict-word { color: var(--fail); }
+
+.banner { padding: 10px 12px; border-radius: 8px; font-size: 13px; margin-bottom: 10px; }
+.banner-error { background: #2a1618; border: 1px solid #5a2b2d; color: #ff9a9d; }
+.banner-info { background: #16232e; border: 1px solid #244055; color: #9ecbff; }
+
+.hint { font-size: 12px; color: var(--muted); margin: 8px 0 0; }
+.empty { font-size: 13px; color: var(--muted); }
+
+.defect-list { list-style: none; margin: 0; padding: 0; display: flex;
+  flex-direction: column; gap: 6px; }
+.defect-list li {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 10px 12px; background: var(--panel); border: 1px solid var(--border);
+  border-left: 3px solid var(--fail); border-radius: 7px;
+}
+.defect-list li.dismissed { border-left-color: var(--muted); opacity: 0.55; }
+.defect-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.defect-name { font-family: ui-monospace, Menlo, monospace; font-size: 14px; font-weight: 600; }
+.defect-meta { font-size: 11px; color: var(--muted); }
+.dismissed-tag { font-size: 11px; color: var(--muted); }
+
+.override {
+  background: transparent; color: var(--muted); border: 1px solid var(--border);
+  border-radius: 6px; padding: 5px 9px; font-size: 12px; cursor: pointer;
+  white-space: nowrap;
+}
+.override:hover:not(:disabled) { color: var(--text); border-color: var(--accent); }

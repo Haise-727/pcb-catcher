@@ -19,3 +19,6 @@ data/golden/
 
 # OS
 .DS_Store
+
+# Generated marker sheet — reproducible via tools/make_markers.py
+tools/markers/
