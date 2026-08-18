@@ -125,6 +125,8 @@ def run_inspection(
                 result.homography, components, roi_scale=thresholds["roi_scale"]
             )
             regions = registration.name_regions(regions, boxes)
+            # One row per component, not one per contour fragment.
+            regions = registration.merge_regions_by_component(regions)
             path_used = "cad"
             degraded = result.state is registration.RegistrationState.DEGRADED
             if degraded:

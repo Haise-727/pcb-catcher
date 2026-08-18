@@ -63,5 +63,15 @@ export const overrideRegion = (regionVerdictId) =>
     body: JSON.stringify({ region_verdict_id: regionVerdictId, revised_verdict: 'false_call' }),
   })
 
+export const regionCropUrl = (inspectionId, regionId) =>
+  `${BASE}/api/inspections/${inspectionId}/regions/${regionId}.jpg`
+
+export const selectDemoBoard = (index) =>
+  request(`/api/demo/board?index=${index}`, { method: 'POST' })
+
+export const nextDemoBoard = () => request('/api/demo/next-board', { method: 'POST' })
+
+export const getInspection = (id) => request(`/api/inspections/${id}`)
+
 export const checkStability = (samples = 50) =>
   request(`/api/camera/stability?samples=${samples}`)

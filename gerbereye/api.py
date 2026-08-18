@@ -19,10 +19,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from . import capture, config, db, export, inspector
+from . import capture, config, db, demo, export, inspector
 from .pipeline import bom, placement
 
-camera = capture.Camera()
+# Demo mode swaps where pixels come from and nothing else -- every stage
+# downstream runs its production path. Opt-in via GERBEREYE_DEMO so a station
+# can never silently serve fake frames when a real camera fails.
+DEMO_MODE = demo.demo_enabled()
+camera = demo.DemoCamera() if DEMO_MODE else capture.Camera()
 
 
 @asynccontextmanager
@@ -106,13 +110,54 @@ class ThresholdUpdate(BaseModel):
 @app.get("/api/health")
 def health() -> dict[str, Any]:
     state = camera.state
-    return {
+    payload: dict[str, Any] = {
         "status": "ok",
+        "demo_mode": DEMO_MODE,
         "camera": {
             "connected": state.connected,
             "settings_locked": state.settings_locked,
             "degraded_reason": state.degraded_reason,
         },
+    }
+    if DEMO_MODE:
+        payload["demo"] = {
+            "board_index": camera.board_index,
+            "board_name": camera.board_name,
+            "board_description": camera.board_description,
+            "boards": demo.board_catalog(),
+        }
+    return payload
+
+
+@app.post("/api/demo/board")
+def select_demo_board(index: int) -> dict[str, Any]:
+    """Choose which bundled board sits 'under the camera'.
+
+    Stands in for physically swapping boards, so the demo can show a clean
+    pass and each defect class without touching hardware.
+    """
+    if not DEMO_MODE:
+        raise HTTPException(status_code=409, detail="not running in demo mode")
+    try:
+        camera.select_board(index)
+    except IndexError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {
+        "board_index": camera.board_index,
+        "board_name": camera.board_name,
+        "board_description": camera.board_description,
+    }
+
+
+@app.post("/api/demo/next-board")
+def next_demo_board() -> dict[str, Any]:
+    if not DEMO_MODE:
+        raise HTTPException(status_code=409, detail="not running in demo mode")
+    camera.next_board()
+    return {
+        "board_index": camera.board_index,
+        "board_name": camera.board_name,
+        "board_description": camera.board_description,
     }
 
 
@@ -350,6 +395,58 @@ def get_inspection(inspection_id: int) -> dict[str, Any]:
         if record is None:
             raise HTTPException(status_code=404, detail="no such inspection")
         return record
+    finally:
+        conn.close()
+
+
+@app.get("/api/inspections/{inspection_id}/regions/{region_id}.jpg")
+def region_crop(inspection_id: int, region_id: int, zoom: int = 4, context: int = 12):
+    """Crop of one defect region from the stored inspection frame.
+
+    Lets the operator confirm a call without leaning over the board. The crop
+    is padded with surrounding context, because a tightly-cropped component is
+    almost unreadable out of position -- you need the neighbours to orient.
+    """
+    conn = get_conn()
+    try:
+        record = db.get_inspection(conn, inspection_id)
+        if record is None:
+            raise HTTPException(status_code=404, detail="no such inspection")
+        if not record.get("frame_path"):
+            raise HTTPException(status_code=404, detail="no frame stored for this inspection")
+
+        region = next((r for r in record["regions"] if r["id"] == region_id), None)
+        if region is None:
+            raise HTTPException(status_code=404, detail="no such region")
+
+        frame = cv2.imread(record["frame_path"])
+        if frame is None:
+            raise HTTPException(status_code=410, detail="frame file is no longer available")
+
+        x, y, w, h = region["bbox"]
+        height, width = frame.shape[:2]
+        x0 = max(x - context, 0)
+        y0 = max(y - context, 0)
+        x1 = min(x + w + context, width)
+        y1 = min(y + h + context, height)
+        crop = frame[y0:y1, x0:x1]
+        if crop.size == 0:
+            raise HTTPException(status_code=404, detail="region lies outside the frame")
+
+        # Outline the region within the crop so it is obvious which part of the
+        # context is the actual finding.
+        annotated = crop.copy()
+        cv2.rectangle(
+            annotated, (x - x0, y - y0), (x - x0 + w, y - y0 + h), (77, 72, 229), 1
+        )
+
+        zoom = max(1, min(zoom, 12))
+        enlarged = cv2.resize(
+            annotated, None, fx=zoom, fy=zoom, interpolation=cv2.INTER_NEAREST
+        )
+        return StreamingResponse(
+            iter([capture.encode_jpeg(enlarged, quality=90)]), media_type="image/jpeg"
+        )
     finally:
         conn.close()
 

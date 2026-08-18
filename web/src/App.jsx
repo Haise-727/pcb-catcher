@@ -1,5 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import Overlay from './Overlay'
+import VerdictCard from './components/VerdictCard'
+import DefectList from './components/DefectList'
+import DemoBar from './components/DemoBar'
+import History from './components/History'
 import * as api from './api'
 
 export default function App() {
@@ -7,37 +11,50 @@ export default function App() {
   const [boardTypes, setBoardTypes] = useState([])
   const [boardTypeId, setBoardTypeId] = useState(null)
   const [result, setResult] = useState(null)
+  const [inspections, setInspections] = useState([])
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
   const [notice, setNotice] = useState(null)
+  const [panel, setPanel] = useState('defects')
 
   const imgRef = useRef(null)
   const [naturalSize, setNaturalSize] = useState({ width: 0, height: 0 })
   const [displaySize, setDisplaySize] = useState({ width: 0, height: 0 })
 
+  const refreshHealth = useCallback(
+    () => api.getHealth().then(setHealth).catch((err) => setError(err.message)),
+    [],
+  )
+
   const refreshBoardTypes = useCallback(async () => {
     try {
       const types = await api.listBoardTypes()
       setBoardTypes(types)
-      // Auto-select so a returning operator can trigger immediately without
-      // re-picking the board they were already working on.
+      // Auto-select so a returning operator can trigger immediately rather
+      // than re-picking the board they were already working on.
       setBoardTypeId((current) => current ?? types[0]?.id ?? null)
     } catch (err) {
       setError(err.message)
     }
   }, [])
 
+  const refreshInspections = useCallback(
+    () => api.listInspections(15).then(setInspections).catch(() => {}),
+    [],
+  )
+
   useEffect(() => {
-    api.getHealth().then(setHealth).catch((err) => setError(err.message))
+    refreshHealth()
     refreshBoardTypes()
-  }, [refreshBoardTypes])
+    refreshInspections()
+  }, [refreshHealth, refreshBoardTypes, refreshInspections])
 
   // Keep the overlay canvas locked to the rendered video size. The MJPEG image
-  // is responsive, so a window resize would otherwise leave boxes misaligned.
+  // is responsive, so a resize would otherwise leave boxes misaligned and the
+  // station would appear to blame the wrong components.
   useEffect(() => {
     const element = imgRef.current
     if (!element) return
-
     const sync = () => {
       setDisplaySize({ width: element.clientWidth, height: element.clientHeight })
       if (element.naturalWidth) {
@@ -70,6 +87,39 @@ export default function App() {
     }
   }
 
+  const selectedBoard = boardTypes.find((b) => b.id === boardTypeId)
+  const canInspect = Boolean(boardTypeId) && Boolean(selectedBoard?.golden_count)
+
+  const handleTrigger = useCallback(
+    () =>
+      withBusy(async () => {
+        const outcome = await api.trigger(boardTypeId)
+        setResult(outcome)
+        setPanel('defects')
+        refreshInspections()
+        return outcome
+      }),
+    [boardTypeId, refreshInspections],
+  )
+
+  // Space triggers, D cycles the demo board. The operator's hands are on the
+  // board rather than the mouse, so the primary action needs a key.
+  useEffect(() => {
+    const onKey = (event) => {
+      const tag = event.target?.tagName
+      if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return
+      if (event.code === 'Space' && canInspect && !busy) {
+        event.preventDefault()
+        handleTrigger()
+      }
+      if (event.key?.toLowerCase() === 'd' && health?.demo_mode && !busy) {
+        api.nextDemoBoard().then(refreshHealth).catch(() => {})
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [canInspect, busy, handleTrigger, health?.demo_mode, refreshHealth])
+
   const handleCreateBoardType = () =>
     withBusy(async () => {
       const name = window.prompt('Board type name')
@@ -81,61 +131,50 @@ export default function App() {
     })
 
   const handleCaptureGolden = () =>
-    withBusy(
-      () => api.captureGolden(boardTypeId),
-      'Golden reference captured. This board is now the reference for comparison.',
-    )
-
-  const handleTrigger = () =>
     withBusy(async () => {
-      const outcome = await api.trigger(boardTypeId)
-      setResult(outcome)
-      return outcome
+      await api.captureGolden(boardTypeId)
+      await refreshBoardTypes()
+      setNotice('Golden reference captured. This board is now the comparison reference.')
     })
 
-  const handleUploadPlacement = (event) => {
+  const readFile = (event, handler) => {
     const file = event.target.files?.[0]
     if (!file) return
     const reader = new FileReader()
-    reader.onload = () =>
+    reader.onload = () => handler(String(reader.result))
+    reader.readAsText(file)
+    event.target.value = ''
+  }
+
+  const handleUploadPlacement = (event) =>
+    readFile(event, (content) =>
       withBusy(async () => {
-        const response = await api.uploadPlacement(boardTypeId, String(reader.result))
+        const response = await api.uploadPlacement(boardTypeId, content)
         await refreshBoardTypes()
-        // Surface the exclusion count rather than only the loaded count: a
-        // technician needs to notice if the file knocks out part of the board.
         const excluded = response.dnp_excluded
           ? ` ${response.dnp_excluded} do-not-populate designator(s) excluded.`
           : ''
         setNotice(
-          `Pick-and-place loaded — ${response.component_count} components will be ` +
-            `inspected.${excluded} Defects will now be named by reference designator.`,
+          `Pick-and-place loaded — ${response.component_count} components will be inspected.` +
+            `${excluded} Defects will now be named by reference designator.`,
         )
-        return response
-      })
-    reader.readAsText(file)
-  }
+      }),
+    )
 
-  // The BOM is authoritative for do-not-populate state. Without it, a
-  // deliberately-empty designator is reported as a defect on every board.
-  const handleUploadBom = (event) => {
-    const file = event.target.files?.[0]
-    if (!file) return
-    const reader = new FileReader()
-    reader.onload = () =>
+  // Without a BOM, a deliberately-empty designator is reported as a defect on
+  // every board -- the exact false call FR-002 exists to prevent.
+  const handleUploadBom = (event) =>
+    readFile(event, (content) =>
       withBusy(async () => {
-        const response = await api.uploadBom(boardTypeId, String(reader.result))
+        const response = await api.uploadBom(boardTypeId, content)
         await refreshBoardTypes()
         setNotice(
-          `BOM loaded — ${response.dnp_applied} do-not-populate designator(s) ` +
-            `excluded from inspection. ${response.inspectable_components} components remain.`,
+          `BOM loaded — ${response.dnp_applied} do-not-populate designator(s) excluded. ` +
+            `${response.inspectable_components} components remain inspectable.`,
         )
-        return response
-      })
-    reader.readAsText(file)
-  }
+      }),
+    )
 
-  // Overriding is one click by design. An operator who has to fill in a form to
-  // dismiss a false call stops dismissing them and starts ignoring the station.
   const handleOverride = (regionId) =>
     withBusy(async () => {
       await api.overrideRegion(regionId)
@@ -149,29 +188,44 @@ export default function App() {
           ),
         },
       )
+      refreshInspections()
+    })
+
+  const handleSelectDemoBoard = (index) =>
+    withBusy(async () => {
+      await api.selectDemoBoard(index)
+      await refreshHealth()
+      // The last result belongs to the previous board; leaving it on screen
+      // would imply it describes the one now loaded.
+      setResult(null)
     })
 
   const handleStability = () =>
     withBusy(async () => {
       const stats = await api.checkStability(50)
       const deviation = stats.mean_deviation
-      // Below 2 grey levels is the gate from AC-006.2. Above it, any threshold
-      // tuned downstream stops being true the moment the light shifts.
       setNotice(
         `Frame stability: ${deviation.toFixed(2)} grey levels mean deviation — ` +
-          (deviation < 2 ? 'stable, safe to tune thresholds.' : 'TOO UNSTABLE, fix lighting first.'),
+          (deviation < 2
+            ? 'stable, safe to tune thresholds.'
+            : 'TOO UNSTABLE — fix lighting before tuning anything.'),
       )
-      return stats
     })
 
-  const selectedBoard = boardTypes.find((b) => b.id === boardTypeId)
+  const handleSelectInspection = (id) =>
+    withBusy(async () => {
+      const record = await api.getInspection(id)
+      setResult({ ...record, inspection_id: record.id })
+      setPanel('defects')
+    })
+
   const activeRegions = result?.regions?.filter((r) => !r.overridden) ?? []
   const cameraOk = health?.camera?.connected
 
   return (
     <div className="app">
       <header className="header">
-        <div>
+        <div className="brand">
           <h1>GerberEye</h1>
           <p className="subtitle">CAD-referenced optical inspection</p>
         </div>
@@ -184,8 +238,15 @@ export default function App() {
               Settings unlocked
             </span>
           )}
+          {selectedBoard?.dnp_count > 0 && (
+            <span className="chip" title="Excluded from inspection (FR-002)">
+              {selectedBoard.dnp_count} DNP excluded
+            </span>
+          )}
         </div>
       </header>
+
+      <DemoBar demo={health?.demo} onSelect={handleSelectDemoBoard} busy={busy} />
 
       <div className="layout">
         <section className="video-panel">
@@ -197,6 +258,15 @@ export default function App() {
               displaySize={displaySize}
             />
           </div>
+
+          <button className="trigger" onClick={handleTrigger} disabled={busy || !canInspect}>
+            {busy ? 'Inspecting…' : 'Inspect board'}
+            <kbd>space</kbd>
+          </button>
+
+          {selectedBoard && !selectedBoard.golden_count && (
+            <p className="hint">Capture a golden reference before inspecting.</p>
+          )}
 
           <div className="controls">
             <select
@@ -210,7 +280,7 @@ export default function App() {
               {boardTypes.map((board) => (
                 <option key={board.id} value={board.id}>
                   {board.name} ({board.component_count} components
-                  {board.dnp_count ? `, ${board.dnp_count} DNP excluded` : ''})
+                  {board.dnp_count ? `, ${board.dnp_count} DNP` : ''})
                 </option>
               ))}
             </select>
@@ -222,12 +292,22 @@ export default function App() {
               Capture golden
             </button>
             <label className={`file-button ${busy || !boardTypeId ? 'disabled' : ''}`}>
-              Load pick-and-place
-              <input type="file" accept=".csv,.txt,.pos" onChange={handleUploadPlacement} disabled={busy || !boardTypeId} />
+              Pick-and-place
+              <input
+                type="file"
+                accept=".csv,.txt,.pos"
+                onChange={handleUploadPlacement}
+                disabled={busy || !boardTypeId}
+              />
             </label>
             <label className={`file-button ${busy || !boardTypeId ? 'disabled' : ''}`}>
-              Load BOM
-              <input type="file" accept=".csv,.txt" onChange={handleUploadBom} disabled={busy || !boardTypeId} />
+              BOM
+              <input
+                type="file"
+                accept=".csv,.txt"
+                onChange={handleUploadBom}
+                disabled={busy || !boardTypeId}
+              />
             </label>
             <button onClick={handleStability} disabled={busy}>
               Check stability
@@ -236,59 +316,36 @@ export default function App() {
               Export CSV
             </a>
           </div>
-
-          <button
-            className="trigger"
-            onClick={handleTrigger}
-            disabled={busy || !boardTypeId || !selectedBoard?.golden_count}
-          >
-            {busy ? 'Inspecting…' : 'Inspect board'}
-          </button>
-          {selectedBoard && !selectedBoard.golden_count && (
-            <p className="hint">Capture a golden reference before inspecting.</p>
-          )}
         </section>
 
         <aside className="sidebar">
           {error && <div className="banner banner-error">{error}</div>}
           {notice && <div className="banner banner-info">{notice}</div>}
 
-          {result && (
-            <div className={`verdict verdict-${result.verdict}`}>
-              <span className="verdict-word">{result.verdict.toUpperCase()}</span>
-              <span className="verdict-meta">
-                {activeRegions.length} active {activeRegions.length === 1 ? 'defect' : 'defects'}
-                {' · '}
-                {result.path_used === 'cad' ? 'CAD-referenced' : 'golden differencing'}
-              </span>
-            </div>
-          )}
+          <VerdictCard result={result} activeCount={activeRegions.length} />
 
           {result?.message && <p className="hint">{result.message}</p>}
 
-          <h2>Defects</h2>
-          {!result && <p className="empty">Run an inspection to see results.</p>}
-          {result && result.regions.length === 0 && (
-            <p className="empty">No deviations from the reference.</p>
-          )}
+          <div className="tabs">
+            <button
+              className={panel === 'defects' ? 'active' : ''}
+              onClick={() => setPanel('defects')}
+            >
+              Defects{result?.regions?.length ? ` (${result.regions.length})` : ''}
+            </button>
+            <button
+              className={panel === 'history' ? 'active' : ''}
+              onClick={() => setPanel('history')}
+            >
+              History
+            </button>
+          </div>
 
-          <ul className="defect-list">
-            {result?.regions.map((region, index) => (
-              <li key={region.id ?? index} className={region.overridden ? 'dismissed' : ''}>
-                <div className="defect-main">
-                  <span className="defect-name">{region.ref_des ?? `Region ${index + 1}`}</span>
-                  <span className="defect-meta">{region.area_px} px²</span>
-                </div>
-                {region.overridden ? (
-                  <span className="dismissed-tag">dismissed</span>
-                ) : (
-                  <button className="override" onClick={() => handleOverride(region.id)} disabled={busy}>
-                    False call
-                  </button>
-                )}
-              </li>
-            ))}
-          </ul>
+          {panel === 'defects' ? (
+            <DefectList result={result} onOverride={handleOverride} busy={busy} />
+          ) : (
+            <History inspections={inspections} onSelect={handleSelectInspection} />
+          )}
         </aside>
       </div>
     </div>
