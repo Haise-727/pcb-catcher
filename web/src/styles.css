@@ -229,3 +229,19 @@ body {
 .history-id { font-family: ui-monospace, Menlo, monospace; font-size: 12px; }
 .history-time { font-size: 11px; color: var(--muted); }
 .history-count { font-size: 11px; color: var(--muted); flex-shrink: 0; }
+
+/* Defect class badge. The class is what makes a finding actionable --
+ * "C14 missing" tells a rework technician what to do, "C14 differs" does not. */
+.defect-class {
+  display: inline-block; margin-left: 7px; font-size: 10px; font-weight: 700;
+  letter-spacing: 0.06em; text-transform: uppercase; padding: 2px 6px;
+  border-radius: 4px; vertical-align: middle;
+}
+.class-absent  { color: #ffb4b6; background: #4a1f21; }
+.class-rotated { color: #ffd9a0; background: #4a3717; }
+.class-offset  { color: #a8d5ff; background: #1d3550; }
+.class-unknown { color: var(--muted); background: #2a2d35; }
+.defect-detail {
+  display: block; margin-top: 4px; font-size: 11px; color: var(--muted);
+  line-height: 1.35; white-space: normal;
+}

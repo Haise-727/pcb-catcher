@@ -39,13 +39,27 @@ export default function DefectList({ result, onOverride, busy }) {
                 onClick={() => setOpenRegion(isOpen ? null : region.id)}
                 title="Show a magnified crop of this region"
               >
-                <span className="defect-name">{label}</span>
+                <span className="defect-name">
+                  {label}
+                  {/* The class is what tells a rework technician what to do.
+                      "C14 missing" is actionable; "C14 differs" is not. */}
+                  {region.defect_class && region.defect_class !== 'present' && (
+                    <span className={`defect-class class-${region.defect_class}`}>
+                      {region.defect_class}
+                    </span>
+                  )}
+                </span>
                 <span className="defect-meta">
                   {region.area_px} px²
+                  {region.confidence != null &&
+                    ` · ${Math.round(region.confidence * 100)}% confidence`}
                   {/* An unnamed region means the change did not overlap any
                       known component -- worth saying, not hiding. */}
                   {!region.ref_des && ' · unmatched'}
                 </span>
+                {/* States what was measured, so the operator can judge the
+                    call rather than take it on trust. */}
+                {region.detail && <span className="defect-detail">{region.detail}</span>}
               </button>
 
               {region.overridden ? (
