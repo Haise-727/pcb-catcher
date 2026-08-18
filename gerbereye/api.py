@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import time
 from contextlib import asynccontextmanager
+from datetime import datetime, timedelta, timezone
 from typing import Any, AsyncIterator, Generator
 
 import cv2
@@ -476,6 +477,28 @@ def override(payload: OverrideRequest) -> dict[str, Any]:
         return {"override_id": override_id, "region_verdict_id": payload.region_verdict_id}
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    finally:
+        conn.close()
+
+
+@app.get("/api/trends")
+def defect_trends(
+    board_type_id: int | None = None, days: int | None = None, limit: int = 25
+) -> dict[str, Any]:
+    """Recurring defects by designator (FR-023).
+
+    Turns the station from a detector into something that improves the line: a
+    single missing C14 is a rework job, C14 missing on 40% of boards is a
+    feeder problem.
+    """
+    conn = get_conn()
+    try:
+        since = None
+        if days:
+            since = (
+                datetime.now(timezone.utc) - timedelta(days=days)
+            ).isoformat()
+        return db.defect_trends(conn, board_type_id=board_type_id, since=since, limit=limit)
     finally:
         conn.close()
 
