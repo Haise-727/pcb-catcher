@@ -1,0 +1,21 @@
+Designator,Mid X,Mid Y,Rotation,Layer,Footprint
+R1,10.00mm,32.00mm,0,top,R_0805
+R2,16.00mm,32.00mm,0,top,R_0805
+R3,22.00mm,32.00mm,0,top,R_0805
+R4,28.00mm,32.00mm,0,top,R_0805
+R5,10.00mm,27.00mm,90,top,R_0603
+R6,16.00mm,27.00mm,90,top,R_0603
+C1,34.00mm,32.00mm,0,top,C_0805
+C2,40.00mm,32.00mm,0,top,C_0805
+C3,46.00mm,32.00mm,0,top,C_0805
+C4,22.00mm,27.00mm,90,top,C_0603
+C5,28.00mm,27.00mm,90,top,C_0603
+C6,50.00mm,22.00mm,0,top,CP_Elec
+C7,50.00mm,10.00mm,0,top,C_0805
+U1,20.00mm,16.00mm,0,top,SOIC-8
+U2,38.00mm,16.00mm,0,top,SOIC-14
+D1,8.00mm,20.00mm,0,top,SOD-123
+D2,8.00mm,14.00mm,0,top,SOD-123
+J1,8.00mm,6.00mm,0,top,Conn_2P
+Q1,30.00mm,8.00mm,0,top,SOT-23
+Q2,38.00mm,8.00mm,0,top,SOT-23
