@@ -15,7 +15,7 @@
 ![network](https://img.shields.io/badge/network-zero%20egress-critical?style=flat-square)
 ![licence](https://img.shields.io/badge/licence-permissive%20only-success?style=flat-square)
 
-[The Problem](#-what-is-this) · [Two Paths](#-two-paths-one-verdict) · [How It Works](#-how-it-works) · [Architecture](#-architecture) · [Numbers](#-the-numbers) · [Decisions](#-decisions-already-settled) · [Docs](#-documentation-map) · [Status](#-status--open-items)
+[The Problem](#-what-is-this) · [Running it](#running-it) · [Two Paths](#-two-paths-one-verdict) · [How It Works](#-how-it-works) · [Architecture](#-architecture) · [Numbers](#-the-numbers) · [Decisions](#-decisions-already-settled) · [Docs](#-documentation-map) · [Status](#-status--open-items)
 
 </div>
 
@@ -32,7 +32,38 @@ Commercial automated optical inspection (AOI) machines solve this. They also cos
 An operator places an assembled board. Within a few seconds the screen outlines every deviation from the design and **names it by reference designator** — `C14 missing`, `U3 rotated 180°` — and writes a permanent local record of the board.
 
 > [!NOTE]
-> **Documentation-first.** Eight phases of requirements, architecture, system modelling and validation are complete and lint-clean, alongside five [Claude Code skills](.claude/skills/) that carry the domain, pipeline, conventions, ADR format and testing strategy into every coding session. Implementation begins from this spec — today the repository is the design, not yet the build.
+> **The MVP framework is built and running.** Path A (golden-board differencing) works end to end: capture → compare → named defect list → override → local record. Path B (CAD registration) projects pick-and-place coordinates onto the live frame via printed ArUco markers.
+>
+> Eight phases of inception documentation sit behind it, alongside five [Claude Code skills](.claude/skills/). Where the build deliberately narrows the spec for the 8-hour round, [`docs/implementation-notes.md`](docs/implementation-notes.md) records what and why.
+
+## Running it
+
+```bash
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt
+.venv/bin/python run.py                 # API + UI on 127.0.0.1:8000
+```
+
+For UI development, run the Vite server alongside:
+
+```bash
+cd web && npm install && npm run dev    # 127.0.0.1:5173
+```
+
+Then: **New board type** → **Capture golden** → put a board under the camera → **Inspect board**.
+
+Optionally load a pick-and-place file to get defects named by reference designator instead of `Region 1`.
+
+**Bench tools** for setting up the station:
+
+```bash
+.venv/bin/python tools/bench_stability.py --samples 100   # gate: < 2 grey levels
+.venv/bin/python tools/make_markers.py                    # printable ArUco sheet
+.venv/bin/python tools/detect_markers.py --samples 20     # verify marker detection
+.venv/bin/python -m pytest tests/ -q                      # 30 tests
+```
+
+---
 
 ### The reframe that makes this work
 
@@ -232,6 +263,8 @@ The high-volatility thresholds — ROI scale ×1.20, offset >25%, rotation >15°
 | [architecture.md](docs/inception/architecture.md) | C4 diagrams, style comparison, stack rationale, ATAM-lite walkthrough, 8-item risk register |
 | [traceability.md](docs/inception/traceability.md) | Forward and backward traceability, review techniques, logged defects |
 | [_id-registry.md](docs/inception/_id-registry.md) | Append-only registry of every ID ever allocated |
+| [implementation-notes.md](docs/implementation-notes.md) | Where the built code deliberately narrows the spec for the 8-hour round, and the condition that restores each |
+| [pipeline-status.md](docs/pipeline-status.md) | What is built, what is blocked on what, and why frame stability gates the threshold work |
 | [.claude/skills/](.claude/skills/) | Five skills — domain, inspection pipeline, conventions, ADR format, testing — that load this context into a coding session |
 
 ---
