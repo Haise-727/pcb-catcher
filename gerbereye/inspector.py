@@ -19,7 +19,7 @@ from typing import Any
 import cv2
 import numpy as np
 
-from . import config, db
+from . import config, db, logging_setup
 from .capture import Camera, save_frame
 from .pipeline import differencing, registration, verdict
 
@@ -80,6 +80,8 @@ def run_inspection(
             seeded-defect corpus run the exact same path as a live inspection.
         persist: write the result to the database.
     """
+    timer = logging_setup.StageTimer()
+
     golden_row = db.latest_golden_reference(conn, board_type_id)
     if golden_row is None:
         raise InspectionError(
@@ -91,20 +93,22 @@ def run_inspection(
         raise InspectionError(f"golden reference unreadable: {golden_row['image_path']}")
 
     if frame is None:
-        frame = camera.read()
+        with timer.stage("capture"):
+            frame = camera.read()
     if frame is None:
         raise InspectionError("no frame available from camera")
 
     thresholds = db.get_thresholds(conn, board_type_id)
 
     # --- Path A: differencing. Always runs; it is what produces the regions.
-    diff = differencing.diff_against_golden(
-        live=frame,
-        golden=golden,
-        diff_intensity=thresholds["diff_intensity"],
-        min_region_area=thresholds["min_region_area"],
-        blur_kernel=thresholds["blur_kernel"],
-    )
+    with timer.stage("differencing"):
+        diff = differencing.diff_against_golden(
+            live=frame,
+            golden=golden,
+            diff_intensity=thresholds["diff_intensity"],
+            min_region_area=thresholds["min_region_area"],
+            blur_kernel=thresholds["blur_kernel"],
+        )
     regions = diff.regions
     path_used = "differencing"
     registration_state = None
@@ -115,18 +119,20 @@ def run_inspection(
     # --- Path B: CAD naming. Only when a component map exists for this board.
     components = db.list_components(conn, board_type_id)
     if components:
-        detected = registration.detect_markers(frame)
-        result = registration.compute_homography(DEFAULT_MARKER_POSITIONS_MM, detected)
+        with timer.stage("registration"):
+            detected = registration.detect_markers(frame)
+            result = registration.compute_homography(DEFAULT_MARKER_POSITIONS_MM, detected)
         registration_state = result.state.value
         residual = result.residual_px
 
         if result.ok:
-            boxes = registration.project_components(
-                result.homography, components, roi_scale=thresholds["roi_scale"]
-            )
-            regions = registration.name_regions(regions, boxes)
-            # One row per component, not one per contour fragment.
-            regions = registration.merge_regions_by_component(regions)
+            with timer.stage("naming"):
+                boxes = registration.project_components(
+                    result.homography, components, roi_scale=thresholds["roi_scale"]
+                )
+                regions = registration.name_regions(regions, boxes)
+                # One row per component, not one per contour fragment.
+                regions = registration.merge_regions_by_component(regions)
             path_used = "cad"
             degraded = result.state is registration.RegistrationState.DEGRADED
             if degraded:
@@ -142,19 +148,35 @@ def run_inspection(
 
     inspection_id = None
     if persist:
-        frame_path = config.IMAGE_DIR / f"inspection_{db.utc_now().replace(':', '-')}.jpg"
-        save_frame(frame, frame_path)
-        inspection_id = db.record_inspection(
-            conn,
-            board_type_id=board_type_id,
-            verdict=board_verdict.value,
-            path_used=path_used,
-            regions=region_dicts,
-            frame_path=frame_path,
-        )
-        # Re-read so the caller gets the database ids the UI needs to send an
-        # override back against.
-        region_dicts = db.list_regions(conn, inspection_id)
+        with timer.stage("persist"):
+            frame_path = config.IMAGE_DIR / f"inspection_{db.utc_now().replace(':', '-')}.jpg"
+            save_frame(frame, frame_path)
+            inspection_id = db.record_inspection(
+                conn,
+                board_type_id=board_type_id,
+                verdict=board_verdict.value,
+                path_used=path_used,
+                regions=region_dicts,
+                frame_path=frame_path,
+            )
+            # Re-read so the caller gets the database ids the UI needs to send
+            # an override back against.
+            region_dicts = db.list_regions(conn, inspection_id)
+
+    # Logged whether or not the result was persisted, so a dry run still
+    # produces timings to measure against the NFR-001 budget.
+    logging_setup.log_inspection(
+        inspection_id=inspection_id,
+        board_type_id=board_type_id,
+        verdict=board_verdict.value,
+        path_used=path_used,
+        component_count=len(components),
+        region_count=len(regions),
+        timer=timer,
+        registration_residual_px=residual,
+        registration_state=registration_state,
+        degraded=degraded,
+    )
 
     return InspectionOutcome(
         verdict=board_verdict.value,

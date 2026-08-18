@@ -27,3 +27,5 @@ tools/markers/
 # Not committed because the render noise defeats PNG compression (~1.1MB each)
 # and the generator is deterministic.
 demo/*.png
+data/*.jsonl
+data/*.jsonl.*
