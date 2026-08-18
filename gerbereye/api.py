@@ -399,6 +399,58 @@ def get_inspection(inspection_id: int) -> dict[str, Any]:
         conn.close()
 
 
+@app.get("/api/inspections/{inspection_id}/regions/{region_id}.jpg")
+def region_crop(inspection_id: int, region_id: int, zoom: int = 4, context: int = 12):
+    """Crop of one defect region from the stored inspection frame.
+
+    Lets the operator confirm a call without leaning over the board. The crop
+    is padded with surrounding context, because a tightly-cropped component is
+    almost unreadable out of position -- you need the neighbours to orient.
+    """
+    conn = get_conn()
+    try:
+        record = db.get_inspection(conn, inspection_id)
+        if record is None:
+            raise HTTPException(status_code=404, detail="no such inspection")
+        if not record.get("frame_path"):
+            raise HTTPException(status_code=404, detail="no frame stored for this inspection")
+
+        region = next((r for r in record["regions"] if r["id"] == region_id), None)
+        if region is None:
+            raise HTTPException(status_code=404, detail="no such region")
+
+        frame = cv2.imread(record["frame_path"])
+        if frame is None:
+            raise HTTPException(status_code=410, detail="frame file is no longer available")
+
+        x, y, w, h = region["bbox"]
+        height, width = frame.shape[:2]
+        x0 = max(x - context, 0)
+        y0 = max(y - context, 0)
+        x1 = min(x + w + context, width)
+        y1 = min(y + h + context, height)
+        crop = frame[y0:y1, x0:x1]
+        if crop.size == 0:
+            raise HTTPException(status_code=404, detail="region lies outside the frame")
+
+        # Outline the region within the crop so it is obvious which part of the
+        # context is the actual finding.
+        annotated = crop.copy()
+        cv2.rectangle(
+            annotated, (x - x0, y - y0), (x - x0 + w, y - y0 + h), (77, 72, 229), 1
+        )
+
+        zoom = max(1, min(zoom, 12))
+        enlarged = cv2.resize(
+            annotated, None, fx=zoom, fy=zoom, interpolation=cv2.INTER_NEAREST
+        )
+        return StreamingResponse(
+            iter([capture.encode_jpeg(enlarged, quality=90)]), media_type="image/jpeg"
+        )
+    finally:
+        conn.close()
+
+
 @app.post("/api/override")
 def override(payload: OverrideRequest) -> dict[str, Any]:
     """Mark a flagged region a false call.
