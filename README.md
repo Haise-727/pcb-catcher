@@ -264,6 +264,7 @@ The high-volatility thresholds — ROI scale ×1.20, offset >25%, rotation >15°
 | [traceability.md](docs/inception/traceability.md) | Forward and backward traceability, review techniques, logged defects |
 | [_id-registry.md](docs/inception/_id-registry.md) | Append-only registry of every ID ever allocated |
 | [implementation-notes.md](docs/implementation-notes.md) | Where the built code deliberately narrows the spec for the 8-hour round, and the condition that restores each |
+| [pipeline-status.md](docs/pipeline-status.md) | What is built, what is blocked on what, and why frame stability gates the threshold work |
 | [.claude/skills/](.claude/skills/) | Five skills — domain, inspection pipeline, conventions, ADR format, testing — that load this context into a coding session |
 
 ---
