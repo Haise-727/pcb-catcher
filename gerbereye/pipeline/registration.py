@@ -231,3 +231,51 @@ def name_regions(
         region.ref_des = best_ref
 
     return regions
+
+
+def merge_regions_by_component(regions: list) -> list:
+    """Collapse fragments belonging to the same component into one region.
+
+    A single physical defect rarely produces a single contour. A rotated IC
+    lights up along each of its edges, so differencing returns four or five
+    separate regions that all name the same part. Presenting those as four
+    findings tells the operator the board is far worse than it is, and makes
+    the station look like it is guessing.
+
+    Fragments sharing a designator are merged into their bounding box, with
+    areas summed. Unnamed regions are left alone: without a designator there
+    is no evidence they belong together, and merging on proximity alone would
+    fuse genuinely separate defects on a dense board.
+    """
+    if not regions:
+        return regions
+
+    merged: list = []
+    by_designator: dict[str, list] = {}
+
+    for region in regions:
+        if region.ref_des is None:
+            merged.append(region)
+        else:
+            by_designator.setdefault(region.ref_des, []).append(region)
+
+    for ref_des, group in by_designator.items():
+        if len(group) == 1:
+            merged.append(group[0])
+            continue
+
+        x0 = min(r.bbox[0] for r in group)
+        y0 = min(r.bbox[1] for r in group)
+        x1 = max(r.bbox[0] + r.bbox[2] for r in group)
+        y1 = max(r.bbox[1] + r.bbox[3] for r in group)
+
+        primary = group[0]
+        primary.bbox = (x0, y0, x1 - x0, y1 - y0)
+        # Summed rather than recomputed from the bounding box: the box includes
+        # unchanged pixels between fragments, and reporting those as changed
+        # would overstate the defect's size.
+        primary.area_px = sum(r.area_px for r in group)
+        merged.append(primary)
+
+    merged.sort(key=lambda r: r.area_px, reverse=True)
+    return merged

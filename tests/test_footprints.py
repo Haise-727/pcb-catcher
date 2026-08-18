@@ -168,3 +168,58 @@ def test_connector_part_number_digits_are_not_read_as_pins():
 def test_implausible_pin_count_falls_back_rather_than_trusting_it():
     (length, _), _ = footprints.lookup("Conn_99999P")
     assert length < 50.0
+
+
+# --------------------------------------------------------------------------
+# Fragment merging
+# --------------------------------------------------------------------------
+
+def test_fragments_of_one_component_merge_into_a_single_finding():
+    """A rotated IC lights up along each edge, producing several contours.
+
+    Reporting those as separate findings tells the operator the board is far
+    worse than it is, and makes the station look like it is guessing.
+    """
+    fragments = [
+        DiffRegion(bbox=(100, 100, 40, 10), area_px=300, ref_des="U1"),
+        DiffRegion(bbox=(100, 140, 40, 10), area_px=280, ref_des="U1"),
+        DiffRegion(bbox=(100, 100, 10, 50), area_px=220, ref_des="U1"),
+    ]
+    merged = registration.merge_regions_by_component(fragments)
+
+    assert len(merged) == 1
+    assert merged[0].ref_des == "U1"
+    # Bounding box spans every fragment.
+    assert merged[0].bbox == (100, 100, 40, 50)
+    # Area is summed, not recomputed from the box: the box includes unchanged
+    # pixels between fragments, and counting those would overstate the defect.
+    assert merged[0].area_px == 800
+
+
+def test_distinct_components_are_not_merged():
+    regions = [
+        DiffRegion(bbox=(100, 100, 20, 20), area_px=400, ref_des="C2"),
+        DiffRegion(bbox=(200, 100, 20, 20), area_px=400, ref_des="R3"),
+    ]
+    merged = registration.merge_regions_by_component(regions)
+    assert {r.ref_des for r in merged} == {"C2", "R3"}
+
+
+def test_unnamed_regions_are_never_merged_together():
+    """Without a designator there is no evidence they belong together, and
+    merging on proximity alone would fuse genuinely separate defects."""
+    regions = [
+        DiffRegion(bbox=(100, 100, 10, 10), area_px=100),
+        DiffRegion(bbox=(140, 100, 10, 10), area_px=100),
+    ]
+    merged = registration.merge_regions_by_component(regions)
+    assert len(merged) == 2
+
+
+def test_merged_regions_are_ordered_largest_first():
+    regions = [
+        DiffRegion(bbox=(0, 0, 5, 5), area_px=50, ref_des="R1"),
+        DiffRegion(bbox=(50, 0, 30, 30), area_px=900, ref_des="U1"),
+    ]
+    merged = registration.merge_regions_by_component(regions)
+    assert [r.ref_des for r in merged] == ["U1", "R1"]
