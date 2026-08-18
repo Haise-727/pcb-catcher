@@ -341,7 +341,20 @@ export default function App() {
 
           <VerdictCard result={result} activeCount={activeRegions.length} />
 
-          {result?.message && <p className="hint">{result.message}</p>}
+          {/* A threshold warning means real defects may be going unreported.
+              That is a recall risk, so it gets a warning banner rather than the
+              muted hint style used for routine notes. */}
+          {result?.message && (
+            <div
+              className={
+                result.message.includes('minimum defect size')
+                  ? 'banner banner-warn'
+                  : 'hint'
+              }
+            >
+              {result.message}
+            </div>
+          )}
 
           <div className="tabs">
             <button

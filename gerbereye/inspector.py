@@ -173,6 +173,30 @@ def run_inspection(
             degraded = result.state is registration.RegistrationState.DEGRADED
             if degraded:
                 message = f"registration degraded ({residual:.1f}px) -- names may be approximate"
+
+            # A noise threshold tuned on a coarse board silently discards real
+            # defects on a denser one: a removed 0603 changes roughly 100px2,
+            # under a 120px2 floor that is perfectly sensible for 0805. That
+            # fails in the safe-looking direction -- the board reports PASS --
+            # so it has to be surfaced rather than left to be discovered.
+            detectable = footprints.minimum_detectable_area_px(
+                components, _estimate_px_per_mm(result.homography) or 0.0
+            )
+            if detectable and thresholds["min_region_area"] > detectable[1]:
+                threshold_warning = (
+                    f"minimum defect size ({thresholds['min_region_area']}px2) is larger "
+                    f"than the change removing {detectable[0]} would produce "
+                    f"(~{detectable[1]:.0f}px2). Missing components of that size may not "
+                    f"be reported. Lower it to about {int(detectable[1] * 0.6)}."
+                )
+                message = f"{message} {threshold_warning}" if message else threshold_warning
+                logging_setup.log_warning(
+                    "threshold_too_coarse",
+                    board_type_id=board_type_id,
+                    min_region_area=thresholds["min_region_area"],
+                    smallest_component=detectable[0],
+                    expected_change_px=round(detectable[1], 1),
+                )
         else:
             # Registration failing does not invalidate the differencing result,
             # it only costs the names. Reporting anonymous regions is far more

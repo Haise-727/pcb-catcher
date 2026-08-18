@@ -233,3 +233,41 @@ def summarise_coverage(components: list[dict]) -> dict:
         "unmatched": len(unmatched),
         "unmatched_designators": sorted(unmatched)[:20],
     }
+
+
+# Fraction of a component's own footprint area that its removal typically
+# changes. A removed part does not blank its whole ROI -- the ROI includes
+# surrounding board that does not change, and the pads often stay visible.
+# Measured at roughly a third on rendered 0603 and 0805 parts.
+REMOVAL_AREA_FRACTION = 0.33
+
+
+def smallest_component(components: list[dict]) -> tuple[str, float] | None:
+    """The component whose removal produces the smallest visible change.
+
+    Returns (ref_des, area_mm2). This is the part that determines whether a
+    noise threshold is safe: if the threshold filters out *this* component's
+    removal, the station will silently pass boards that are missing it.
+    """
+    smallest = None
+    for component in components:
+        width, height = extent_for(component)
+        area = width * height
+        if smallest is None or area < smallest[1]:
+            smallest = (component["ref_des"], area)
+    return smallest
+
+
+def minimum_detectable_area_px(
+    components: list[dict], px_per_mm: float
+) -> tuple[str, float] | None:
+    """Expected changed-pixel area when the smallest component is removed.
+
+    Used to check a configured noise threshold against the board it is actually
+    inspecting. A threshold above this value discards real defects.
+    """
+    smallest = smallest_component(components)
+    if smallest is None or not px_per_mm:
+        return None
+    ref_des, area_mm2 = smallest
+    return ref_des, area_mm2 * (px_per_mm ** 2) * REMOVAL_AREA_FRACTION

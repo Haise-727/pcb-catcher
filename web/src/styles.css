@@ -297,3 +297,10 @@ body {
 .settings-list { margin: 0; padding-left: 16px; display: flex; flex-direction: column; gap: 8px; }
 .settings-list li { font-size: 11px; color: var(--muted); line-height: 1.5; }
 .settings-list strong { color: var(--text); font-weight: 600; }
+
+/* Threshold advisory. Distinct from banner-info because it means real defects
+ * may be going unreported -- a recall risk, not a routine notice. */
+.banner-warn {
+  background: #2a2216; border: 1px solid #5c4715; color: #ffd9a0;
+  line-height: 1.45;
+}

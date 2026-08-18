@@ -223,3 +223,46 @@ def test_merged_regions_are_ordered_largest_first():
     ]
     merged = registration.merge_regions_by_component(regions)
     assert [r.ref_des for r in merged] == ["U1", "R1"]
+
+
+# --------------------------------------------------------------------------
+# Threshold advisory — issue #46
+# --------------------------------------------------------------------------
+
+def test_smallest_component_determines_detectability():
+    """A noise threshold is only safe if it passes the *smallest* component's
+    removal. Anything above that silently discards real defects."""
+    components = [
+        {"ref_des": "U1", "footprint": "SOIC-14", "rotation_deg": 0},
+        {"ref_des": "R9", "footprint": "R_0402", "rotation_deg": 0},
+    ]
+    ref_des, area = footprints.smallest_component(components)
+    assert ref_des == "R9"
+    assert area == pytest.approx(1.0 * 0.5)
+
+
+def test_minimum_detectable_area_scales_with_image_resolution():
+    """The same board at higher resolution produces larger changed areas, so a
+    threshold safe at one scale is not automatically safe at another."""
+    components = [{"ref_des": "R1", "footprint": "R_0603", "rotation_deg": 0}]
+    _ref, coarse = footprints.minimum_detectable_area_px(components, 8.0)
+    _ref2, fine = footprints.minimum_detectable_area_px(components, 16.0)
+    assert fine == pytest.approx(coarse * 4)
+
+
+def test_detectable_area_for_0603_is_below_the_default_threshold():
+    """The regression behind #46.
+
+    A removed 0603 at 16 px/mm changes roughly 108 px^2, under the default
+    120 px^2 noise floor -- so the default silently misses it and the board
+    reports PASS. The advisory exists to make that visible.
+    """
+    from gerbereye import config
+
+    components = [{"ref_des": "R1", "footprint": "R_0603", "rotation_deg": 0}]
+    _ref, area = footprints.minimum_detectable_area_px(components, 16.0)
+    assert area < config.THRESHOLDS.min_region_area
+
+
+def test_no_components_yields_no_recommendation():
+    assert footprints.minimum_detectable_area_px([], 16.0) is None

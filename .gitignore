@@ -29,3 +29,4 @@ tools/markers/
 demo/*.png
 data/*.jsonl
 data/*.jsonl.*
+demo_dense/
