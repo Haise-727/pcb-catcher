@@ -20,7 +20,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from . import capture, config, db, export, inspector
-from .pipeline import placement
+from .pipeline import bom, placement
 
 camera = capture.Camera()
 
@@ -78,6 +78,11 @@ class PlacementUpload(BaseModel):
     board_type_id: int
     # Raw file content rather than a multipart upload: it keeps the operator UI
     # to a single fetch and avoids a file-picker dependency in the MVP.
+    content: str
+
+
+class BomUpload(BaseModel):
+    board_type_id: int
     content: str
 
 
@@ -217,14 +222,67 @@ def upload_placement(payload: PlacementUpload) -> dict[str, Any]:
     conn = get_conn()
     try:
         components = placement.parse_placement_text(payload.content)
-        count = db.replace_components(
+        db.replace_components(
             conn, payload.board_type_id, [c.as_dict() for c in components]
         )
-        return {"board_type_id": payload.board_type_id, "component_count": count}
+        excluded = sorted(c.ref_des for c in components if c.dnp)
+        return {
+            "board_type_id": payload.board_type_id,
+            "component_count": len(components) - len(excluded),
+            # Surfaced so the technician notices at setup if the file knocks
+            # out more of the board than expected (AC-002.2).
+            "dnp_excluded": len(excluded),
+            "dnp_designators": excluded,
+        }
     except placement.PlacementParseError as exc:
         # A malformed customer file is expected control flow, not a server
         # fault -- 400 with the specific reason, so the operator can fix it.
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    finally:
+        conn.close()
+
+
+@app.post("/api/board-types/bom")
+def upload_bom(payload: BomUpload) -> dict[str, Any]:
+    """Ingest a BOM to exclude do-not-populate designators (FR-002).
+
+    The BOM is authoritative over any DNP hint in the pick-and-place file,
+    because it is the document a human curates.
+    """
+    conn = get_conn()
+    try:
+        entries = bom.parse_bom_text(payload.content)
+        excluded = bom.dnp_designators(entries)
+        matched = db.set_dnp(conn, payload.board_type_id, excluded)
+        return {
+            "board_type_id": payload.board_type_id,
+            "bom_entries": len(entries),
+            "dnp_in_bom": len(excluded),
+            "dnp_applied": matched,
+            "dnp_designators": sorted(excluded),
+            "inspectable_components": len(db.list_components(conn, payload.board_type_id)),
+        }
+    except bom.BomParseError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    finally:
+        conn.close()
+
+
+@app.get("/api/board-types/{board_type_id}/components")
+def list_components(board_type_id: int, include_dnp: bool = True) -> dict[str, Any]:
+    """Component map for a board type, DNP entries flagged.
+
+    Defaults to including DNP so the setup screen can show what was excluded;
+    the inspection path never uses this endpoint.
+    """
+    conn = get_conn()
+    try:
+        components = db.list_components(conn, board_type_id, include_dnp=include_dnp)
+        return {
+            "board_type_id": board_type_id,
+            "components": components,
+            "dnp_count": db.count_dnp(conn, board_type_id),
+        }
     finally:
         conn.close()
 

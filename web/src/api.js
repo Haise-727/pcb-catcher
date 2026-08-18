@@ -45,6 +45,12 @@ export const uploadPlacement = (boardTypeId, content) =>
     body: JSON.stringify({ board_type_id: boardTypeId, content }),
   })
 
+export const uploadBom = (boardTypeId, content) =>
+  request('/api/board-types/bom', {
+    method: 'POST',
+    body: JSON.stringify({ board_type_id: boardTypeId, content }),
+  })
+
 export const trigger = (boardTypeId) =>
   request(`/api/trigger?board_type_id=${boardTypeId}`, { method: 'POST' })
 
