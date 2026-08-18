@@ -4,6 +4,7 @@ import VerdictCard from './components/VerdictCard'
 import DefectList from './components/DefectList'
 import DemoBar from './components/DemoBar'
 import History from './components/History'
+import Trends from './components/Trends'
 import * as api from './api'
 
 export default function App() {
@@ -12,6 +13,7 @@ export default function App() {
   const [boardTypeId, setBoardTypeId] = useState(null)
   const [result, setResult] = useState(null)
   const [inspections, setInspections] = useState([])
+  const [trends, setTrends] = useState(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
   const [notice, setNotice] = useState(null)
@@ -42,6 +44,15 @@ export default function App() {
     () => api.listInspections(15).then(setInspections).catch(() => {}),
     [],
   )
+
+  const refreshTrends = useCallback(() => {
+    if (!boardTypeId) return
+    api.getTrends(boardTypeId).then(setTrends).catch(() => {})
+  }, [boardTypeId])
+
+  useEffect(() => {
+    refreshTrends()
+  }, [refreshTrends])
 
   useEffect(() => {
     refreshHealth()
@@ -97,9 +108,10 @@ export default function App() {
         setResult(outcome)
         setPanel('defects')
         refreshInspections()
+        refreshTrends()
         return outcome
       }),
-    [boardTypeId, refreshInspections],
+    [boardTypeId, refreshInspections, refreshTrends],
   )
 
   // Space triggers, D cycles the demo board. The operator's hands are on the
@@ -189,6 +201,10 @@ export default function App() {
         },
       )
       refreshInspections()
+      // Overriding removes the region from the trend counts, so the panel has
+      // to reflect it -- otherwise a dismissed false call keeps inflating what
+      // looks like a process fault.
+      refreshTrends()
     })
 
   const handleSelectDemoBoard = (index) =>
@@ -339,13 +355,21 @@ export default function App() {
             >
               History
             </button>
+            <button
+              className={panel === 'trends' ? 'active' : ''}
+              onClick={() => setPanel('trends')}
+            >
+              Trends
+            </button>
           </div>
 
-          {panel === 'defects' ? (
+          {panel === 'defects' && (
             <DefectList result={result} onOverride={handleOverride} busy={busy} />
-          ) : (
+          )}
+          {panel === 'history' && (
             <History inspections={inspections} onSelect={handleSelectInspection} />
           )}
+          {panel === 'trends' && <Trends trends={trends} />}
         </aside>
       </div>
     </div>

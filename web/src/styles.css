@@ -245,3 +245,16 @@ body {
   display: block; margin-top: 4px; font-size: 11px; color: var(--muted);
   line-height: 1.35; white-space: normal;
 }
+
+/* Recurring defects. Rates carry more meaning than counts here -- "C14 failed
+ * 12 times" says nothing without knowing whether that was 15 boards or 1500. */
+.trends-summary { font-size: 12px; color: var(--muted); margin: 0 0 12px; }
+.trends-summary strong { color: var(--text); }
+.trend-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 12px; }
+.trend-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.trend-name { font-family: ui-monospace, Menlo, monospace; font-size: 13px; font-weight: 600; }
+.trend-rate { font-size: 12px; color: var(--text); }
+.trend-count { color: var(--muted); }
+.trend-bar { height: 6px; background: var(--panel); border-radius: 3px; overflow: hidden; margin-top: 5px; }
+.trend-fill { height: 100%; background: linear-gradient(90deg, var(--fail), #ff8a5c); border-radius: 3px; }
+.trend-classes { display: block; margin-top: 5px; font-size: 11px; color: var(--muted); }

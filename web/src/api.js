@@ -73,5 +73,8 @@ export const nextDemoBoard = () => request('/api/demo/next-board', { method: 'PO
 
 export const getInspection = (id) => request(`/api/inspections/${id}`)
 
+export const getTrends = (boardTypeId, limit = 12) =>
+  request(`/api/trends?board_type_id=${boardTypeId}&limit=${limit}`)
+
 export const checkStability = (samples = 50) =>
   request(`/api/camera/stability?samples=${samples}`)

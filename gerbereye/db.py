@@ -416,6 +416,81 @@ def list_inspections(conn: sqlite3.Connection, limit: int = 100) -> list[dict[st
     return [dict(r) for r in rows]
 
 
+def defect_trends(
+    conn: sqlite3.Connection,
+    board_type_id: int | None = None,
+    since: str | None = None,
+    limit: int = 25,
+) -> dict[str, Any]:
+    """Recurring defects, grouped by reference designator.
+
+    This is what turns the station from a detector into something that improves
+    the line. A single missing C14 is a rework job; C14 missing on 40% of
+    boards is a feeder problem, and only the aggregate makes that visible.
+
+    Overridden regions are excluded from the counts. An operator dismissing a
+    call is saying the board was fine, so counting it would let a noisy
+    threshold masquerade as a process fault -- and the whole point of this view
+    is to decide where to spend engineering effort.
+    """
+    filters = ["o.id IS NULL", "r.ref_des IS NOT NULL"]
+    params: list[Any] = []
+    if board_type_id is not None:
+        filters.append("i.board_type_id = ?")
+        params.append(board_type_id)
+    if since:
+        filters.append("i.started_at >= ?")
+        params.append(since)
+    where = " AND ".join(filters)
+
+    rows = conn.execute(
+        "SELECT r.ref_des,"
+        "       COUNT(*) AS occurrences,"
+        "       SUM(CASE WHEN r.defect_class = 'absent'  THEN 1 ELSE 0 END) AS absent,"
+        "       SUM(CASE WHEN r.defect_class = 'rotated' THEN 1 ELSE 0 END) AS rotated,"
+        "       SUM(CASE WHEN r.defect_class = 'offset'  THEN 1 ELSE 0 END) AS offset_count,"
+        "       SUM(CASE WHEN r.defect_class IS NULL OR r.defect_class"
+        "                IN ('present','unknown') THEN 1 ELSE 0 END) AS unclassified"
+        " FROM region_verdict r"
+        " JOIN inspection i ON i.id = r.inspection_id"
+        " LEFT JOIN override o ON o.region_verdict_id = r.id"
+        f" WHERE {where}"
+        " GROUP BY r.ref_des"
+        " ORDER BY occurrences DESC, r.ref_des"
+        " LIMIT ?",
+        (*params, limit),
+    ).fetchall()
+
+    # Inspection total for the same window, so a count can be read as a rate.
+    # "C14 failed 12 times" means nothing without knowing whether that is out
+    # of 15 boards or 1500.
+    total_filters = []
+    total_params: list[Any] = []
+    if board_type_id is not None:
+        total_filters.append("board_type_id = ?")
+        total_params.append(board_type_id)
+    if since:
+        total_filters.append("started_at >= ?")
+        total_params.append(since)
+    total_where = (" WHERE " + " AND ".join(total_filters)) if total_filters else ""
+    total = conn.execute(
+        f"SELECT COUNT(*) AS n FROM inspection{total_where}", tuple(total_params)
+    ).fetchone()["n"]
+
+    designators = []
+    for row in rows:
+        entry = dict(row)
+        entry["offset"] = entry.pop("offset_count")
+        entry["rate"] = round(entry["occurrences"] / total, 4) if total else 0.0
+        designators.append(entry)
+
+    return {
+        "board_type_id": board_type_id,
+        "inspections": total,
+        "designators": designators,
+    }
+
+
 def add_override(
     conn: sqlite3.Connection, region_verdict_id: int, revised_verdict: str
 ) -> int:
