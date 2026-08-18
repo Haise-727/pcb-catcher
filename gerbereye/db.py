@@ -24,7 +24,7 @@ from typing import Any, Iterable
 
 from . import config
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS schema_meta (
@@ -68,6 +68,10 @@ CREATE TABLE IF NOT EXISTS component (
     rotation_deg  REAL    NOT NULL,
     side          TEXT    NOT NULL,
     footprint     TEXT,
+    -- Do-not-populate: present in the design, deliberately empty on every
+    -- assembled board. Must never be inspected (FR-002) -- reporting one as
+    -- absent is a guaranteed false call on every board of this type.
+    dnp           INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (board_type_id, ref_des)
 );
 
@@ -113,12 +117,27 @@ def connect() -> sqlite3.Connection:
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
     conn.executescript(SCHEMA)
+    _migrate(conn)
     conn.execute(
         "INSERT OR IGNORE INTO schema_meta (key, value) VALUES ('schema_version', ?)",
         (str(SCHEMA_VERSION),),
     )
     conn.commit()
     return conn
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    """Bring an existing database up to the current schema.
+
+    `CREATE TABLE IF NOT EXISTS` is a no-op on a database that already has the
+    table, so a column added after the first release needs an explicit ALTER.
+    Migrations are forward-only and additive -- an existing inspection record
+    must survive an upgrade untouched (NFR-012).
+    """
+    existing = {row["name"] for row in conn.execute("PRAGMA table_info(component)")}
+    if existing and "dnp" not in existing:
+        conn.execute("ALTER TABLE component ADD COLUMN dnp INTEGER NOT NULL DEFAULT 0")
+        conn.commit()
 
 
 # --------------------------------------------------------------------------
@@ -152,7 +171,8 @@ def get_or_create_board_type(conn: sqlite3.Connection, name: str) -> int:
 def list_board_types(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     rows = conn.execute(
         "SELECT b.id, b.name, b.created_at,"
-        "       (SELECT COUNT(*) FROM component c WHERE c.board_type_id = b.id) AS component_count,"
+        "       (SELECT COUNT(*) FROM component c WHERE c.board_type_id = b.id AND c.dnp = 0) AS component_count,"
+        "       (SELECT COUNT(*) FROM component c WHERE c.board_type_id = b.id AND c.dnp = 1) AS dnp_count,"
         "       (SELECT COUNT(*) FROM golden_reference g WHERE g.board_type_id = b.id) AS golden_count"
         " FROM board_type b ORDER BY b.id"
     ).fetchall()
@@ -229,25 +249,57 @@ def replace_components(
             c.get("rotation_deg", 0.0),
             c.get("side", "top"),
             c.get("footprint"),
+            1 if c.get("dnp") else 0,
         )
         for c in components
     ]
     conn.executemany(
         "INSERT INTO component (board_type_id, ref_des, x_mm, y_mm, rotation_deg,"
-        " side, footprint) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        " side, footprint, dnp) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         rows,
     )
     conn.commit()
     return len(rows)
 
 
-def list_components(conn: sqlite3.Connection, board_type_id: int) -> list[dict[str, Any]]:
-    rows = conn.execute(
-        "SELECT ref_des, x_mm, y_mm, rotation_deg, side, footprint"
-        " FROM component WHERE board_type_id = ? ORDER BY ref_des",
-        (board_type_id,),
-    ).fetchall()
+def list_components(
+    conn: sqlite3.Connection, board_type_id: int, include_dnp: bool = False
+) -> list[dict[str, Any]]:
+    """Components for a board type.
+
+    DNP designators are excluded by default and every inspection path uses that
+    default. They are only ever returned when a caller explicitly asks -- e.g.
+    the setup screen showing the technician what was excluded (AC-002.2).
+    """
+    query = (
+        "SELECT ref_des, x_mm, y_mm, rotation_deg, side, footprint, dnp"
+        " FROM component WHERE board_type_id = ?"
+    )
+    if not include_dnp:
+        query += " AND dnp = 0"
+    rows = conn.execute(query + " ORDER BY ref_des", (board_type_id,)).fetchall()
     return [dict(r) for r in rows]
+
+
+def set_dnp(conn: sqlite3.Connection, board_type_id: int, designators: set[str]) -> int:
+    """Flag the given designators do-not-populate. Returns how many matched."""
+    if not designators:
+        return 0
+    placeholders = ",".join("?" for _ in designators)
+    cur = conn.execute(
+        f"UPDATE component SET dnp = 1 WHERE board_type_id = ? AND ref_des IN ({placeholders})",
+        (board_type_id, *designators),
+    )
+    conn.commit()
+    return cur.rowcount
+
+
+def count_dnp(conn: sqlite3.Connection, board_type_id: int) -> int:
+    row = conn.execute(
+        "SELECT COUNT(*) AS n FROM component WHERE board_type_id = ? AND dnp = 1",
+        (board_type_id,),
+    ).fetchone()
+    return int(row["n"])
 
 
 # --------------------------------------------------------------------------

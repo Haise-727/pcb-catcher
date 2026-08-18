@@ -29,7 +29,20 @@ _COLUMN_ALIASES: dict[str, tuple[str, ...]] = {
     "rotation_deg": ("rotation", "rot", "angle"),
     "side": ("layer", "side", "tb"),
     "footprint": ("footprint", "package", "pattern", "comment"),
+    # Some exporters carry populate state directly in the placement file. The
+    # BOM remains authoritative, but honouring this means a board type ingested
+    # without a BOM still excludes the obvious cases (FR-002).
+    "dnp": ("dnp", "dni", "nopop", "do not populate", "populate", "fitted"),
 }
+
+# Under a DNP-semantics column ("DNP", "NoPop"), these mean the part is NOT
+# fitted. Note "no" is deliberately absent: in a column headed DNP, "no" means
+# "not do-not-populate", i.e. the part IS fitted. Reading it the other way
+# round would silently exclude every fitted component on the board.
+_DNP_AFFIRMATIVE = {"dnp", "dni", "nopop", "nofit", "yes", "y", "true", "1", "x"}
+
+# Under a populate-semantics column ("Populate", "Fitted"), these mean fitted.
+_FITTED_VALUES = {"yes", "y", "true", "1", "fit", "fitted", "populated"}
 
 _NUMBER = re.compile(r"-?\d+(?:\.\d+)?")
 
@@ -51,6 +64,7 @@ class Component:
     rotation_deg: float = 0.0
     side: str = "top"
     footprint: str | None = None
+    dnp: bool = False
 
     def as_dict(self) -> dict:
         return {
@@ -60,6 +74,7 @@ class Component:
             "rotation_deg": self.rotation_deg,
             "side": self.side,
             "footprint": self.footprint,
+            "dnp": self.dnp,
         }
 
 
@@ -176,9 +191,23 @@ def parse_placement_text(text: str) -> list[Component]:
         except PlacementParseError:
             rotation = 0.0
 
+        # Polarity of the column matters: "populate"/"fitted" mean the opposite
+        # of "dnp"/"nopop", so the header decides how the cell is read.
+        dnp = False
+        dnp_idx = columns.get("dnp")
+        if dnp_idx is not None:
+            raw = cell("dnp").lower()
+            header_name = _normalise(headers[dnp_idx])
+            if raw:
+                if header_name.startswith(("populate", "fitted")):
+                    dnp = raw not in _FITTED_VALUES
+                else:
+                    dnp = raw in _DNP_AFFIRMATIVE
+
         components.append(
             Component(
                 ref_des=ref_des,
+                dnp=dnp,
                 x_mm=_to_float(row[columns["x_mm"]]) * scale,
                 y_mm=_to_float(row[columns["y_mm"]]) * scale,
                 rotation_deg=rotation % 360.0,

@@ -101,8 +101,36 @@ export default function App() {
       withBusy(async () => {
         const response = await api.uploadPlacement(boardTypeId, String(reader.result))
         await refreshBoardTypes()
+        // Surface the exclusion count rather than only the loaded count: a
+        // technician needs to notice if the file knocks out part of the board.
+        const excluded = response.dnp_excluded
+          ? ` ${response.dnp_excluded} do-not-populate designator(s) excluded.`
+          : ''
+        setNotice(
+          `Pick-and-place loaded — ${response.component_count} components will be ` +
+            `inspected.${excluded} Defects will now be named by reference designator.`,
+        )
         return response
-      }, 'Pick-and-place loaded. Defects will now be named by reference designator.')
+      })
+    reader.readAsText(file)
+  }
+
+  // The BOM is authoritative for do-not-populate state. Without it, a
+  // deliberately-empty designator is reported as a defect on every board.
+  const handleUploadBom = (event) => {
+    const file = event.target.files?.[0]
+    if (!file) return
+    const reader = new FileReader()
+    reader.onload = () =>
+      withBusy(async () => {
+        const response = await api.uploadBom(boardTypeId, String(reader.result))
+        await refreshBoardTypes()
+        setNotice(
+          `BOM loaded — ${response.dnp_applied} do-not-populate designator(s) ` +
+            `excluded from inspection. ${response.inspectable_components} components remain.`,
+        )
+        return response
+      })
     reader.readAsText(file)
   }
 
@@ -181,7 +209,8 @@ export default function App() {
               </option>
               {boardTypes.map((board) => (
                 <option key={board.id} value={board.id}>
-                  {board.name} ({board.component_count} components)
+                  {board.name} ({board.component_count} components
+                  {board.dnp_count ? `, ${board.dnp_count} DNP excluded` : ''})
                 </option>
               ))}
             </select>
@@ -195,6 +224,10 @@ export default function App() {
             <label className={`file-button ${busy || !boardTypeId ? 'disabled' : ''}`}>
               Load pick-and-place
               <input type="file" accept=".csv,.txt,.pos" onChange={handleUploadPlacement} disabled={busy || !boardTypeId} />
+            </label>
+            <label className={`file-button ${busy || !boardTypeId ? 'disabled' : ''}`}>
+              Load BOM
+              <input type="file" accept=".csv,.txt" onChange={handleUploadBom} disabled={busy || !boardTypeId} />
             </label>
             <button onClick={handleStability} disabled={busy}>
               Check stability

@@ -92,9 +92,15 @@ resolves ties by nearest centre, which is defensible but not exact.
 **Restore condition:** parse footprint extents from the Gerber or a footprint
 library, then feed real per-component dimensions into `project_components()`.
 
-### 2.5 DNP exclusion and polarity classing not implemented
+### 2.5 Polarity classing not implemented
 
-**Narrows:** FR-002, FR-003. **Tracked by:** #31 — the highest-risk item in this document
+**Narrows:** FR-003. **Tracked by:** #37
+
+> **RESOLVED for FR-002 (2026-08-18).** DNP exclusion is implemented — see
+> `gerbereye/pipeline/bom.py`. BOM ingestion marks do-not-populate designators,
+> `list_components()` filters them by default, and no projected box is created
+> for them, so no defect can carry their designator. Only polarity classing
+> (FR-003) remains outstanding.
 
 Both need BOM data the MVP does not ingest. **This is the one departure with a
 live false-call risk**: a do-not-populate designator sits empty on every board,
