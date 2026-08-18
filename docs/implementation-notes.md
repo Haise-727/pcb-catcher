@@ -34,7 +34,7 @@ condition that would restore the full behaviour.
 
 ### 2.1 Printed ArUco markers instead of copper fiducials
 
-**Narrows:** FR-007 (detect registration features).
+**Narrows:** FR-007 (detect registration features). **Tracked by:** #32
 
 The docs specify detecting the board's own copper fiducials. Those are small,
 low-contrast, and easily confused with vias and test points — a poor first CV
@@ -52,7 +52,7 @@ so swapping the detector needs no change downstream.
 
 ### 2.2 Region-level differencing rather than per-component classification
 
-**Narrows:** FR-012, FR-013, FR-014 (presence, placement, orientation classes).
+**Narrows:** FR-012, FR-013, FR-014 (presence, placement, orientation classes). **Tracked by:** #37
 
 The docs describe classical-feature classification per component ROI, producing
 `present / absent / misaligned / rotated / polarity-reversed`. The MVP reports
@@ -69,7 +69,7 @@ orchestrator or the API, because `DiffRegion` already carries the fields.
 
 ### 2.3 Binary verdict, no `for-review` state
 
-**Narrows:** BR-07 (confidence floor 0.60 → mark for-review).
+**Narrows:** BR-07 (confidence floor 0.60 → mark for-review). **Tracked by:** #37
 
 `for-review` requires a per-component confidence value, which only the
 per-class classifier produces. With region differencing there is no meaningful
@@ -79,7 +79,7 @@ confidence to threshold, so the verdict is binary.
 
 ### 2.4 Nominal component box size
 
-**Narrows:** BR-03 (ROI = footprint extent × 1.20).
+**Narrows:** BR-03 (ROI = footprint extent × 1.20). **Tracked by:** #36
 
 Package dimensions are not in the pick-and-place file, and parsing footprint
 libraries was not affordable in the runway. Every component currently gets the
@@ -94,7 +94,7 @@ library, then feed real per-component dimensions into `project_components()`.
 
 ### 2.5 DNP exclusion and polarity classing not implemented
 
-**Narrows:** FR-002, FR-003.
+**Narrows:** FR-002, FR-003. **Tracked by:** #31 — the highest-risk item in this document
 
 Both need BOM data the MVP does not ingest. **This is the one departure with a
 live false-call risk**: a do-not-populate designator sits empty on every board,
@@ -111,14 +111,39 @@ component map at load time.
 
 ### 2.6 No latency instrumentation
 
-**Narrows:** NFR-001 (p95 ≤ 5.0s, instrumented over 200 inspections).
+**Narrows:** NFR-001 (p95 ≤ 5.0s, instrumented over 200 inspections). **Tracked by:** #38, needs #33
 
-Per-stage timing is not recorded. Observed round-trip on synthetic frames is
-well inside budget, but that is not a measurement against the reference bench
-and must not be quoted as one.
+Per-stage timing is not recorded. A synthetic benchmark (1080p, 250 components)
+puts the diff path at **134 ms against a 5 000 ms budget** — roughly 37x
+headroom, with ECC alignment accounting for 119 ms of it and clearly earning
+its cost (a 6 px board shift produces 34 false regions without it, 0 with it).
+
+That figure excludes camera capture, JPEG encode, HTTP round-trip and browser
+render, and it ran on a synthetic image. **It is not an NFR-001 result and must
+not be quoted as one.**
 
 **Restore condition:** add per-stage timers in `inspector.run_inspection()` and
 log them; the structured-logging requirement (FR-027) is also outstanding.
+
+### 2.7 No structured logging
+
+**Narrows:** FR-027. **Tracked by:** #33
+
+No module imports `logging`. The three diagnostic fields the requirement names —
+`registration_residual_px`, per-stage duration, component count — are all
+uncaptured, so a latency regression and an accuracy regression are
+indistinguishable from the outside.
+
+### 2.8 No retention sweep
+
+**Narrows:** FR-024, NFR-002. **Tracked by:** #34
+
+Every trigger writes a JPEG and nothing deletes them. Low urgency for an
+eight-hour round, real for a shop floor running 100+ boards a shift.
+
+When implemented it must delete **image files only** and null their path
+columns — never `inspection` or `region_verdict` rows, which are append-only and
+are the audit trail (NFR-012).
 
 ---
 
@@ -145,6 +170,8 @@ These were not compromised and should not be quietly dropped later:
 
 **None are currently evidenced.** NFR-004 (recall ≥90%) and NFR-005 (false calls
 ≤0.5%) require the seeded-defect corpus, which is issue #20 and not yet built.
+Threshold tuning (#9) is blocked behind the frame-stability gate (#3) — see
+[`pipeline-status.md`](pipeline-status.md).
 
 The synthetic tests in `tests/test_pipeline.py` show the detector behaves
 correctly on constructed cases — a removed component is flagged at its location,
