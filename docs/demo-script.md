@@ -11,13 +11,18 @@ The build is only half the score. This is the other half.
 ```bash
 python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
-.venv/bin/python tools/seed_demo.py          # generates boards, seeds the station
-GERBEREYE_DEMO=1 .venv/bin/python run.py     # terminal 1
-cd web && npm install && npm run dev         # terminal 2
+cd web && npm install && npm run build && cd ..   # build the UI once
+.venv/bin/python tools/seed_demo.py               # generates boards, seeds the station
+.venv/bin/python tools/check_integration.py       # confirm every button works
+GERBEREYE_DEMO=1 .venv/bin/python run.py          # one process, UI included
 ```
 
-Open `http://127.0.0.1:5173`. The board type, golden reference, component map
+Open `http://127.0.0.1:8000`. The board type, golden reference, component map
 and BOM are already loaded — no setup clicking in front of a jury.
+
+Building the UI means **one terminal, not two**, on demo day. Run
+`check_integration.py` last: it drives every endpoint the UI calls and tells you
+in five seconds whether anything on screen will 500.
 
 **Rehearse this twice against a clock before presenting.**
 
@@ -96,12 +101,65 @@ Click **Export CSV**.
 
 ---
 
+## The follow-up that wins the technical argument (30s)
+
+**Deploy this when a judge pushes on accuracy, robustness, or "what happens in
+a real factory?"** It is the strongest thing you have, and it needs no hardware.
+
+The demo bar has a second row: **Bench conditions**. Select **golden**, then
+walk the three profiles.
+
+**Jig locked** → press space.
+
+> "Correct board, controlled light. Passes clean."
+
+Click **Check stability**.
+
+> "Frame stability 0.8 grey levels. Under two, so the thresholds mean something."
+
+**Exposure unlocked (#35)** → click **Check stability**.
+
+> "Same board. But now the camera driver won't hold manual exposure — which is
+> the actual fault on our development laptop. Stability is 3 grey levels, and
+> the station says so: **settings unlocked, degraded**. It doesn't pretend."
+
+**Uncontrolled shop light (CON-11)** → press space, on the *good* board.
+
+> "Overhead fluorescents, no enclosure, a board that shifts in the jig. Watch —
+> **it fails a board that is perfectly fine.** Fourteen regions, all of them
+> phantom."
+
+Then the line that matters:
+
+> "That is the honest answer to 'how accurate is it?'. The dominant term isn't
+> our algorithm — it's whether the light is controlled. So we built the gate
+> that refuses to trust thresholds tuned on unstable frames, and we surface the
+> degraded state instead of hiding it. Most inspection demos show you the happy
+> path. We'll show you ours breaking, and where the guard sits."
+
+Set it back to **Jig locked** before you move on.
+
+**Be precise about what this is:** a simulated bench, and say the word
+*simulated* out loud. It models placement jitter, ring-light falloff, exposure
+drift and sensor noise, and it drives the real pipeline — but it is not a
+measurement of a real camera. The claim is *"this is why lighting stability is
+the first thing we fix"*, not *"this is our false-call rate"*.
+
+---
+
 ## Questions you should expect
 
 **"Is that a real board?"**
 Be straight: it is a rendered board, because our camera hardware is still being
-assembled. The pipeline is the production path — same code, same classifier.
+assembled. The pipeline is the production path — same code, same classifier,
+and the frames come through a simulated bench that models jitter, light falloff,
+exposure drift and sensor noise rather than handing the pipeline perfect pixels.
 Then offer: the physical demo runs the moment the jig is built.
+
+**"Doesn't the simulation just make it look good?"**
+The opposite, and you can prove it in five seconds — switch to **Uncontrolled
+shop light** and fail a good board in front of them. A simulation built to
+flatter would not have a setting that breaks it.
 
 **"What is your accuracy?"**
 Do **not** quote a number. Say: the seeded-defect corpus is built but recall

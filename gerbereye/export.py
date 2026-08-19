@@ -23,7 +23,11 @@ columns are reordered or removed, so any new field goes on the end.
 
 from __future__ import annotations
 
+import csv
+import io
 import sqlite3
+
+from . import db
 
 CSV_COLUMNS = [
     "inspection_id",
@@ -63,7 +67,44 @@ def build_inspection_csv(conn: sqlite3.Connection, limit: int = 500) -> str:
     Returns:
         CSV text including the header row.
     """
-    raise NotImplementedError(
-        "issue #16 — implement CSV export. Run `pytest tests/test_export.py` "
-        "to see the expected behaviour."
-    )
+    buffer = io.StringIO()
+    # QUOTE_MINIMAL and \r\n keep the file readable by Excel, which is what an
+    # MSME will actually open it in.
+    writer = csv.writer(buffer, lineterminator="\r\n")
+    writer.writerow(CSV_COLUMNS)
+
+    for inspection in db.list_inspections(conn, limit=limit):
+        shared = [
+            inspection["id"],
+            inspection["board_type_name"],
+            inspection["started_at"],
+            inspection["verdict"],
+            inspection["path_used"],
+        ]
+
+        regions = db.list_regions(conn, inspection["id"])
+        if not regions:
+            # A clean board still gets a row. Dropping it would make the export
+            # look like the board was never inspected at all, which is the
+            # opposite of the traceability claim this file exists to support.
+            writer.writerow(shared + [""] * (len(CSV_COLUMNS) - len(shared)))
+            continue
+
+        for region in regions:
+            x, y, w, h = region["bbox"]
+            writer.writerow(
+                shared
+                + [
+                    region["id"],
+                    region["ref_des"] or "",
+                    x,
+                    y,
+                    w,
+                    h,
+                    region["area_px"],
+                    region["verdict"],
+                    "yes" if region["overridden"] else "no",
+                ]
+            )
+
+    return buffer.getvalue()

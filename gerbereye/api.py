@@ -20,7 +20,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from . import capture, config, db, demo, export, inspector, logging_setup, retention
+from . import bench, capture, config, db, demo, export, inspector, logging_setup, retention
 from .pipeline import bom, placement
 
 # Demo mode swaps where pixels come from and nothing else -- every stage
@@ -132,11 +132,15 @@ def health() -> dict[str, Any]:
         },
     }
     if DEMO_MODE:
+        profile = camera.bench.profile
         payload["demo"] = {
             "board_index": camera.board_index,
             "board_name": camera.board_name,
             "board_description": camera.board_description,
             "boards": demo.board_catalog(),
+            "bench_profile": profile.name,
+            "bench_expectation": profile.expectation,
+            "bench_profiles": bench.profile_catalog(),
         }
     return payload
 
@@ -173,6 +177,34 @@ def next_demo_board() -> dict[str, Any]:
     }
 
 
+@app.post("/api/bench/profile")
+def select_bench_profile(name: str) -> dict[str, Any]:
+    """Change simulated bench conditions (virtual jig / ring light / sensor).
+
+    Stands in for hardware we cannot currently build: it lets the frame
+    stability gate (#3), the degraded-capture state (#35) and the
+    illumination-drives-false-calls claim (RSK-02) be demonstrated rather than
+    asserted. Demo mode only -- the real camera path has real conditions.
+    """
+    if not DEMO_MODE:
+        raise HTTPException(status_code=409, detail="not running in demo mode")
+    try:
+        camera.select_bench_profile(name)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    profile = camera.bench.profile
+    return {
+        "bench_profile": profile.name,
+        "label": profile.label,
+        "description": profile.description,
+        "expectation": profile.expectation,
+        "settings_locked": profile.settings_locked,
+        "degraded_reason": profile.degraded_reason,
+        "simulated": True,
+    }
+
+
 @app.post("/api/camera/reopen")
 def reopen_camera() -> dict[str, Any]:
     """Recover after the camera was unplugged, without restarting the app."""
@@ -185,14 +217,21 @@ def reopen_camera() -> dict[str, Any]:
 
 
 @app.get("/api/camera/stability")
-def camera_stability(samples: int = 100) -> dict[str, float]:
+def camera_stability(samples: int = 100) -> dict[str, Any]:
     """Frame-stability bench check (AC-006.2, issue #3).
 
     Mean deviation must sit below 2 grey levels before threshold tuning is
     meaningful. Exposed as an endpoint so it can be run from the UI on the
     shop floor rather than only from a developer's terminal.
     """
-    return capture.measure_frame_stability(camera, samples=samples)
+    stats: dict[str, Any] = dict(capture.measure_frame_stability(camera, samples=samples))
+    # In demo mode this measures the virtual bench, not a camera. Flagging it
+    # in the payload is the difference between demonstrating that the gate
+    # works and quoting a fabricated AC-006.2 result.
+    stats["simulated"] = DEMO_MODE
+    if DEMO_MODE:
+        stats["bench_profile"] = camera.bench.profile.name
+    return stats
 
 
 # --------------------------------------------------------------------------

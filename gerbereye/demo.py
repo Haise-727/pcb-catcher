@@ -23,7 +23,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from . import config
+from . import bench, config
 from .capture import CaptureState
 
 DEMO_DIR = config.ROOT / "demo"
@@ -84,13 +84,33 @@ class DemoCamera:
     def __init__(self, board_index: int = 0) -> None:
         self._board_index = board_index
         self._cache: dict[str, np.ndarray] = {}
-        self.state = CaptureState(
+        # The virtual bench stands in for the jig, ring light and sensor. It
+        # defaults to `locked` -- the bench working as specified -- so demo
+        # behaviour is unchanged unless someone deliberately degrades it.
+        self.bench = bench.Bench()
+        self.state = self._state_for_profile()
+
+    def _state_for_profile(self) -> CaptureState:
+        """Capture state follows the bench profile.
+
+        Selecting a degraded profile must light up the same warning an
+        operator would see from a real camera that refused manual control,
+        otherwise the simulation would be demonstrating nothing.
+        """
+        profile = self.bench.profile
+        return CaptureState(
             connected=True,
-            settings_locked=True,
-            # Stated plainly rather than left blank: anyone reading the health
-            # endpoint must be able to tell this is not a real camera.
-            degraded_reason=None,
+            settings_locked=profile.settings_locked,
+            degraded_reason=profile.degraded_reason,
         )
+
+    @property
+    def bench_profile(self) -> str:
+        return self.bench.profile.name
+
+    def select_bench_profile(self, name: str) -> None:
+        self.bench.select(name)
+        self.state = self._state_for_profile()
 
     # -- board selection ---------------------------------------------------
 
@@ -148,13 +168,10 @@ class DemoCamera:
                 return None
             self._cache[name] = image
 
-        frame = self._cache[name].copy()
-
-        # A trace of sensor noise per read, so consecutive frames are not
-        # bit-identical. Without it the demo would be unrealistically perfect
-        # and would hide any alignment bug the real path would expose.
-        noise = np.random.default_rng().normal(0, 0.8, frame.shape)
-        return np.clip(frame.astype(np.float32) + noise, 0, 255).astype(np.uint8)
+        # The bench applies placement jitter, ring-light falloff, exposure
+        # drift and read noise. Without it the demo would be unrealistically
+        # perfect and would hide any alignment bug the real path would expose.
+        return self.bench.apply(self._cache[name])
 
     def release(self) -> None:
         self._cache.clear()
