@@ -30,11 +30,14 @@ condition that would restore the full behaviour.
 | `gerbereye/pipeline/classify.py` | Defect classification | FR-012, FR-013, FR-014 |
 | `gerbereye/inspector.py` | Orchestration, path precedence | FR-015 AC-015.4 |
 | `gerbereye/api.py` | HTTP API, MJPEG stream, crops | IF-05, NFR-011 |
-| `gerbereye/export.py` | CSV export — **stub, issue #16** | FR-022 |
+| `gerbereye/export.py` | CSV export | FR-022 |
+| `gerbereye/bench.py` | Virtual bench — simulated jig, ring light, sensor | RSK-02, #3, #35 |
 | `web/` | Operator UI, overlay, override, history, trends | FR-018–FR-020, FR-023 |
 | `tools/` | Bench scripts, demo generator, benchmarks | FR-006, RSK-02, RSK-03 |
 
-**Tests:** 108 passing, 6 failing by design (the #16 export stubs).
+**Tests:** 154 passing, 0 failing. Plus `tools/check_integration.py`, which
+starts the real server and drives all 29 endpoint interactions the UI performs
+— 29/29 green.
 
 ---
 
@@ -132,6 +135,40 @@ CAD path runs against a board type whose golden reference is missing.
 **Restore condition:** ingest the BOM, filter DNP designators out of the
 component map at load time.
 
+### 2.9 Hardware conditions are simulated, not built — NEW
+
+**Narrows:** nothing. **Adds:** a way to exercise #2, #3 and #35 without them.
+
+The hardware chain cannot be brought up before the internal round, which left
+three requirements implemented but undemonstrable: the frame-stability gate
+(AC-006.2) always passed trivially, the degraded-capture state (FR-006 A1) never
+fired, and RSK-02's central claim — that illumination stability dominates the
+false-call rate — was asserted in prose with nothing to point at.
+
+`gerbereye/bench.py` puts the bundled board images through a model of a cheap
+webcam on a jig: sub-pixel placement jitter, radial ring-light falloff,
+exposure drift driven by a frame counter, and gaussian read noise. Three
+profiles select the conditions.
+
+| Profile | Simulated stability | Golden board | What it stands in for |
+|---|---|---|---|
+| `locked` | 0.84 levels — **passes** | `pass`, 0 regions | the bench as specified (#2 done) |
+| `unlocked` | 3.07 levels — fails | `pass` | #35, the driver refusing manual exposure |
+| `harsh` | 7.97 levels — fails | **`fail`, 14 phantom regions** | CON-11, uncontrolled shop light |
+
+`locked` is the default and is deliberately near-identical to the previous demo
+behaviour, so adding realism could not break the demo. The other two exist to be
+switched to on purpose.
+
+**These figures are simulated and are not NFR results.** They demonstrate that
+the gate *works*; they say nothing about a real camera. Every payload carrying a
+bench number also carries `simulated: true`, the UI prints the word, and the real
+`Camera` class is untouched by this module.
+
+**Restore condition:** none — this is additive. When the physical bench exists,
+`locked` becomes redundant for demo purposes but the degraded profiles stay
+useful as a regression harness for threshold changes.
+
 ### 2.6 Latency measured only in demo mode
 
 **Narrows:** NFR-001. **Tracked by:** #38
@@ -192,6 +229,10 @@ These were not compromised and should not be quietly dropped later:
 ---
 
 ## 4. Accuracy claims
+
+> The virtual bench (§2.9) does **not** change anything in this section. It
+> makes the *mechanism* visible; it measures nothing. Recall and false-call rate
+> still require real boards under a real camera.
 
 **None are currently evidenced.** NFR-004 (recall ≥90%) and NFR-005 (false calls
 ≤0.5%) require the seeded-defect corpus, which is issue #20 and not yet built.

@@ -71,6 +71,9 @@ export const selectDemoBoard = (index) =>
 
 export const nextDemoBoard = () => request('/api/demo/next-board', { method: 'POST' })
 
+export const selectBenchProfile = (name) =>
+  request(`/api/bench/profile?name=${encodeURIComponent(name)}`, { method: 'POST' })
+
 export const getInspection = (id) => request(`/api/inspections/${id}`)
 
 export const getTrends = (boardTypeId, limit = 12) =>

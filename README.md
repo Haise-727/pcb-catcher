@@ -32,7 +32,9 @@ Commercial automated optical inspection (AOI) machines solve this. They also cos
 An operator places an assembled board. Within a few seconds the screen outlines every deviation from the design and **names it by reference designator** — `C14 missing`, `U3 rotated 180°` — and writes a permanent local record of the board.
 
 > [!NOTE]
-> **Working end to end, with no hardware required.** `python tools/seed_demo.py` then `GERBEREYE_DEMO=1 python run.py` gives a running inspection station: place a board, trigger, and see defects named by reference designator and classified as missing, rotated or offset — with a magnified crop, one-click override, recurring-defect trends and a CSV record.
+> **Working end to end, with no hardware required.** `python tools/seed_demo.py` then `GERBEREYE_DEMO=1 python run.py` gives a running inspection station: place a board, trigger, and see defects named by reference designator and classified as missing, rotated or offset — with a magnified crop, one-click override, recurring-defect trends and a CSV record. 154 unit tests and 29 integration checks pass.
+>
+> A **virtual bench** ([`gerbereye/bench.py`](gerbereye/bench.py)) simulates the jig, ring light and sensor, so the hardware-dependent behaviour is demonstrable before the hardware exists: switch to *uncontrolled shop light* and watch a perfectly good board fail with phantom defects. That is RSK-02's claim — illumination stability dominates the false-call rate — shown rather than asserted. **Simulated conditions are labelled as such everywhere and are never accuracy measurements.**
 >
 > Eight phases of inception documentation sit behind it, alongside five [Claude Code skills](.claude/skills/). [`docs/implementation-notes.md`](docs/implementation-notes.md) records where the build narrows the spec and why.
 
@@ -41,19 +43,27 @@ An operator places an assembled board. Within a few seconds the screen outlines 
 ```bash
 python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
+cd web && npm install && npm run build && cd ..   # build the operator UI once
 
 # No camera? Generate the demo boards and a ready-to-inspect station:
 .venv/bin/python tools/seed_demo.py
-GERBEREYE_DEMO=1 .venv/bin/python run.py
+GERBEREYE_DEMO=1 .venv/bin/python run.py          # everything on 127.0.0.1:8000
 
 # With hardware:
-.venv/bin/python run.py                 # API + UI on 127.0.0.1:8000
+.venv/bin/python run.py
 ```
 
-For UI development, run the Vite server alongside:
+Verify the whole stack is wired — starts the real server and drives every
+endpoint the UI calls:
 
 ```bash
-cd web && npm install && npm run dev    # 127.0.0.1:5173
+.venv/bin/python tools/check_integration.py
+```
+
+For UI development, run the Vite server alongside instead:
+
+```bash
+cd web && npm run dev                   # 127.0.0.1:5173
 ```
 
 Then: **New board type** → **Capture golden** → put a board under the camera → **Inspect board**.

@@ -217,12 +217,24 @@ export default function App() {
       setResult(null)
     })
 
+  const handleSelectBenchProfile = (name) =>
+    withBusy(async () => {
+      await api.selectBenchProfile(name)
+      await refreshHealth()
+      // Conditions changed, so the previous result no longer describes the
+      // bench that produced it.
+      setResult(null)
+    })
+
   const handleStability = () =>
     withBusy(async () => {
       const stats = await api.checkStability(50)
       const deviation = stats.mean_deviation
       setNotice(
-        `Frame stability: ${deviation.toFixed(2)} grey levels mean deviation — ` +
+        // Saying "simulated" out loud matters: this number verifies the gate
+        // works, it is not an AC-006.2 measurement of a real camera.
+        `${stats.simulated ? 'Simulated frame stability' : 'Frame stability'}: ` +
+          `${deviation.toFixed(2)} grey levels mean deviation — ` +
           (deviation < 2
             ? 'stable, safe to tune thresholds.'
             : 'TOO UNSTABLE — fix lighting before tuning anything.'),
@@ -263,7 +275,12 @@ export default function App() {
         </div>
       </header>
 
-      <DemoBar demo={health?.demo} onSelect={handleSelectDemoBoard} busy={busy} />
+      <DemoBar
+        demo={health?.demo}
+        onSelect={handleSelectDemoBoard}
+        onSelectBench={handleSelectBenchProfile}
+        busy={busy}
+      />
 
       <div className="layout">
         <section className="video-panel">

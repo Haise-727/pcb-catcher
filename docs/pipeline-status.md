@@ -3,10 +3,15 @@
 **Last updated:** 2026-08-19 (overnight session)
 **Purpose:** what is built, what is blocked on what, and who clears each blocker.
 
-The software is substantially complete. **Everything still open on the
-engineering side is blocked on physical hardware existing** — not on more code
-being written. That remains the most important fact for planning: additional
-coding effort does not move the critical path.
+The software is complete and integration-verified. **Everything still open on
+the engineering side is blocked on physical hardware existing** — not on more
+code being written.
+
+What changed 2026-08-19: the hardware-dependent *behaviour* is now demonstrable
+without the hardware. A virtual bench (`gerbereye/bench.py`) simulates the jig,
+ring light and sensor, so the frame-stability gate (#3), the degraded-capture
+state (#35) and RSK-02's illumination claim can all be shown to a jury. This
+does **not** unblock the hardware issues — it removes their cost to the demo.
 
 ---
 
@@ -28,11 +33,12 @@ gives a running station that will:
 - show a **magnified crop** of any finding
 - accept a **one-click override**, appended not edited
 - aggregate **recurring defects** by designator
-- **export CSV**, and expire images while keeping every record
+- **export CSV** (#16), and expire images while keeping every record
 - allow **live threshold retuning** with no restart
+- switch **bench conditions** and watch a good board fail under bad light
 
-127 tests pass. Six fail by design — the `test_export.py` stubs belonging to
-#16.
+**154 tests pass, none fail.** `tools/check_integration.py` additionally starts
+the real server and drives all 29 endpoint interactions the UI performs: 29/29.
 
 ---
 
@@ -42,9 +48,12 @@ gives a running station that will:
 #2  jig + camera locked        (Yuvaraj, physical)
      │
      ├──> #35 driver refuses manual exposure   [BUG — may block #3]
-     │
+     │         └── simulated by bench profile `unlocked`, so the failure
+     │             mode is demonstrable while the fix stays open
      v
 #3  frame stability < 2 levels  (Yuvaraj, physical)   ◄── THE GATE
+     │         └── gate logic verified against the bench; the real
+     │             measurement still needs the real camera
      │
      ├────────────────┬───────────────────┐
      v                v                   v
@@ -54,7 +63,7 @@ gives a running station that will:
 #20 seeded defects ──> #21 backup video ──> #22 fallback ──> #23 pitch
 
 #5  ArUco markers taped (Yuvaraj)  ──>  #32 measure real marker positions
-#16 CSV export (Yuvaraj)           ──>  nothing; fully isolated
+#16 CSV export                     ──>  DONE 2026-08-19
 ```
 
 Unassigned, available to any teammate: **#41** polarity, **#42** bottom-side
@@ -95,6 +104,9 @@ aggressively that auto-exposure has nothing to react to.
 | Defect classification | 4/4 seeded classes correct | on synthetic boards |
 | Recall (NFR-004) | — | **not measured.** Needs #20 |
 | False-call rate (NFR-005) | — | **not measured.** Needs #20 and real boards |
+| Simulated stability, `locked` | 0.84 levels | **Simulated.** Verifies the gate passes clean conditions |
+| Simulated stability, `harsh` | 7.97 levels | **Simulated.** Verifies the gate catches bad ones |
+| Integration checks | 29/29 | real — every endpoint the UI calls |
 
 The accuracy figures are the two that matter for the pitch, and neither exists
 yet. `docs/demo-script.md` covers how to answer that honestly: offer live
@@ -116,6 +128,8 @@ What contains it, none of which fixes it:
   source of frame-to-frame difference independently of exposure.
 - **Demo mode** now provides a complete working station with no camera at all,
   which is the RSK-07 contingency made real rather than promised.
+- The **virtual bench** turns #35 from a hole in the demo into a talking point:
+  the failure mode can be shown deliberately, alongside the guard built for it.
 
 That last point materially changed the risk picture overnight: a hardware
 failure on the day no longer costs the demo, only the claim that it runs on
