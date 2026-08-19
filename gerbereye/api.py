@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import time
 from contextlib import asynccontextmanager
+from datetime import datetime, timedelta, timezone
 from typing import Any, AsyncIterator, Generator
 
 import cv2
@@ -19,10 +20,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from . import capture, config, db, export, inspector
-from .pipeline import placement
+from . import capture, config, db, demo, export, inspector, logging_setup, retention
+from .pipeline import bom, placement
 
-camera = capture.Camera()
+# Demo mode swaps where pixels come from and nothing else -- every stage
+# downstream runs its production path. Opt-in via GERBEREYE_DEMO so a station
+# can never silently serve fake frames when a real camera fails.
+DEMO_MODE = demo.demo_enabled()
+camera = demo.DemoCamera() if DEMO_MODE else capture.Camera()
 
 
 @asynccontextmanager
@@ -33,7 +38,18 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     station, one operator and one board at a time.
     """
     config.ensure_dirs()
+    logging_setup.setup()
     camera.open()
+
+    # Cheap when there is nothing to do, and it means a station left running
+    # for months does not depend on anyone remembering to reclaim space.
+    if config.RETENTION.sweep_on_startup:
+        conn = db.connect()
+        try:
+            retention.sweep(conn, config.RETENTION.days)
+        finally:
+            conn.close()
+
     yield
     camera.release()
 
@@ -81,6 +97,11 @@ class PlacementUpload(BaseModel):
     content: str
 
 
+class BomUpload(BaseModel):
+    board_type_id: int
+    content: str
+
+
 class OverrideRequest(BaseModel):
     region_verdict_id: int
     revised_verdict: str = "false_call"
@@ -101,13 +122,54 @@ class ThresholdUpdate(BaseModel):
 @app.get("/api/health")
 def health() -> dict[str, Any]:
     state = camera.state
-    return {
+    payload: dict[str, Any] = {
         "status": "ok",
+        "demo_mode": DEMO_MODE,
         "camera": {
             "connected": state.connected,
             "settings_locked": state.settings_locked,
             "degraded_reason": state.degraded_reason,
         },
+    }
+    if DEMO_MODE:
+        payload["demo"] = {
+            "board_index": camera.board_index,
+            "board_name": camera.board_name,
+            "board_description": camera.board_description,
+            "boards": demo.board_catalog(),
+        }
+    return payload
+
+
+@app.post("/api/demo/board")
+def select_demo_board(index: int) -> dict[str, Any]:
+    """Choose which bundled board sits 'under the camera'.
+
+    Stands in for physically swapping boards, so the demo can show a clean
+    pass and each defect class without touching hardware.
+    """
+    if not DEMO_MODE:
+        raise HTTPException(status_code=409, detail="not running in demo mode")
+    try:
+        camera.select_board(index)
+    except IndexError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {
+        "board_index": camera.board_index,
+        "board_name": camera.board_name,
+        "board_description": camera.board_description,
+    }
+
+
+@app.post("/api/demo/next-board")
+def next_demo_board() -> dict[str, Any]:
+    if not DEMO_MODE:
+        raise HTTPException(status_code=409, detail="not running in demo mode")
+    camera.next_board()
+    return {
+        "board_index": camera.board_index,
+        "board_name": camera.board_name,
+        "board_description": camera.board_description,
     }
 
 
@@ -217,14 +279,67 @@ def upload_placement(payload: PlacementUpload) -> dict[str, Any]:
     conn = get_conn()
     try:
         components = placement.parse_placement_text(payload.content)
-        count = db.replace_components(
+        db.replace_components(
             conn, payload.board_type_id, [c.as_dict() for c in components]
         )
-        return {"board_type_id": payload.board_type_id, "component_count": count}
+        excluded = sorted(c.ref_des for c in components if c.dnp)
+        return {
+            "board_type_id": payload.board_type_id,
+            "component_count": len(components) - len(excluded),
+            # Surfaced so the technician notices at setup if the file knocks
+            # out more of the board than expected (AC-002.2).
+            "dnp_excluded": len(excluded),
+            "dnp_designators": excluded,
+        }
     except placement.PlacementParseError as exc:
         # A malformed customer file is expected control flow, not a server
         # fault -- 400 with the specific reason, so the operator can fix it.
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    finally:
+        conn.close()
+
+
+@app.post("/api/board-types/bom")
+def upload_bom(payload: BomUpload) -> dict[str, Any]:
+    """Ingest a BOM to exclude do-not-populate designators (FR-002).
+
+    The BOM is authoritative over any DNP hint in the pick-and-place file,
+    because it is the document a human curates.
+    """
+    conn = get_conn()
+    try:
+        entries = bom.parse_bom_text(payload.content)
+        excluded = bom.dnp_designators(entries)
+        matched = db.set_dnp(conn, payload.board_type_id, excluded)
+        return {
+            "board_type_id": payload.board_type_id,
+            "bom_entries": len(entries),
+            "dnp_in_bom": len(excluded),
+            "dnp_applied": matched,
+            "dnp_designators": sorted(excluded),
+            "inspectable_components": len(db.list_components(conn, payload.board_type_id)),
+        }
+    except bom.BomParseError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    finally:
+        conn.close()
+
+
+@app.get("/api/board-types/{board_type_id}/components")
+def list_components(board_type_id: int, include_dnp: bool = True) -> dict[str, Any]:
+    """Component map for a board type, DNP entries flagged.
+
+    Defaults to including DNP so the setup screen can show what was excluded;
+    the inspection path never uses this endpoint.
+    """
+    conn = get_conn()
+    try:
+        components = db.list_components(conn, board_type_id, include_dnp=include_dnp)
+        return {
+            "board_type_id": board_type_id,
+            "components": components,
+            "dnp_count": db.count_dnp(conn, board_type_id),
+        }
     finally:
         conn.close()
 
@@ -296,6 +411,58 @@ def get_inspection(inspection_id: int) -> dict[str, Any]:
         conn.close()
 
 
+@app.get("/api/inspections/{inspection_id}/regions/{region_id}.jpg")
+def region_crop(inspection_id: int, region_id: int, zoom: int = 4, context: int = 12):
+    """Crop of one defect region from the stored inspection frame.
+
+    Lets the operator confirm a call without leaning over the board. The crop
+    is padded with surrounding context, because a tightly-cropped component is
+    almost unreadable out of position -- you need the neighbours to orient.
+    """
+    conn = get_conn()
+    try:
+        record = db.get_inspection(conn, inspection_id)
+        if record is None:
+            raise HTTPException(status_code=404, detail="no such inspection")
+        if not record.get("frame_path"):
+            raise HTTPException(status_code=404, detail="no frame stored for this inspection")
+
+        region = next((r for r in record["regions"] if r["id"] == region_id), None)
+        if region is None:
+            raise HTTPException(status_code=404, detail="no such region")
+
+        frame = cv2.imread(record["frame_path"])
+        if frame is None:
+            raise HTTPException(status_code=410, detail="frame file is no longer available")
+
+        x, y, w, h = region["bbox"]
+        height, width = frame.shape[:2]
+        x0 = max(x - context, 0)
+        y0 = max(y - context, 0)
+        x1 = min(x + w + context, width)
+        y1 = min(y + h + context, height)
+        crop = frame[y0:y1, x0:x1]
+        if crop.size == 0:
+            raise HTTPException(status_code=404, detail="region lies outside the frame")
+
+        # Outline the region within the crop so it is obvious which part of the
+        # context is the actual finding.
+        annotated = crop.copy()
+        cv2.rectangle(
+            annotated, (x - x0, y - y0), (x - x0 + w, y - y0 + h), (77, 72, 229), 1
+        )
+
+        zoom = max(1, min(zoom, 12))
+        enlarged = cv2.resize(
+            annotated, None, fx=zoom, fy=zoom, interpolation=cv2.INTER_NEAREST
+        )
+        return StreamingResponse(
+            iter([capture.encode_jpeg(enlarged, quality=90)]), media_type="image/jpeg"
+        )
+    finally:
+        conn.close()
+
+
 @app.post("/api/override")
 def override(payload: OverrideRequest) -> dict[str, Any]:
     """Mark a flagged region a false call.
@@ -310,6 +477,67 @@ def override(payload: OverrideRequest) -> dict[str, Any]:
         return {"override_id": override_id, "region_verdict_id": payload.region_verdict_id}
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    finally:
+        conn.close()
+
+
+@app.get("/api/trends")
+def defect_trends(
+    board_type_id: int | None = None, days: int | None = None, limit: int = 25
+) -> dict[str, Any]:
+    """Recurring defects by designator (FR-023).
+
+    Turns the station from a detector into something that improves the line: a
+    single missing C14 is a rework job, C14 missing on 40% of boards is a
+    feeder problem.
+    """
+    conn = get_conn()
+    try:
+        since = None
+        if days:
+            since = (
+                datetime.now(timezone.utc) - timedelta(days=days)
+            ).isoformat()
+        return db.defect_trends(conn, board_type_id=board_type_id, since=since, limit=limit)
+    finally:
+        conn.close()
+
+
+# --------------------------------------------------------------------------
+# Retention
+# --------------------------------------------------------------------------
+
+@app.get("/api/storage")
+def storage_usage() -> dict[str, Any]:
+    """Image footprint and the retention window in force."""
+    conn = get_conn()
+    try:
+        return {
+            "retention_days": config.RETENTION.days,
+            **retention.usage(conn),
+            "records": retention.verdict_row_count(conn),
+        }
+    finally:
+        conn.close()
+
+
+@app.post("/api/storage/sweep")
+def run_sweep(retention_days: int | None = None) -> dict[str, Any]:
+    """Delete inspection images past the retention window.
+
+    Images only. Inspection and verdict rows are never removed -- they are the
+    audit trail, and the response reports their counts so a caller can confirm
+    nothing was lost.
+    """
+    conn = get_conn()
+    try:
+        before = retention.verdict_row_count(conn)
+        result = retention.sweep(conn, retention_days or config.RETENTION.days)
+        return {
+            **result.as_dict(),
+            "records_before": before,
+            "records_after": retention.verdict_row_count(conn),
+        }
     finally:
         conn.close()
 

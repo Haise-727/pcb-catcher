@@ -22,3 +22,11 @@ data/golden/
 
 # Generated marker sheet — reproducible via tools/make_markers.py
 tools/markers/
+
+# Demo board images — regenerate with tools/make_demo_boards.py.
+# Not committed because the render noise defeats PNG compression (~1.1MB each)
+# and the generator is deterministic.
+demo/*.png
+data/*.jsonl
+data/*.jsonl.*
+demo_dense/

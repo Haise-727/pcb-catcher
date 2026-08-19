@@ -119,3 +119,188 @@ body {
   white-space: nowrap;
 }
 .override:hover:not(:disabled) { color: var(--text); border-color: var(--accent); }
+
+/* ---------------------------------------------------------------------------
+ * Demo mode
+ * The banner is deliberately loud. Demo mode serves synthetic frames, and
+ * anyone glancing at the screen must be able to tell this is not a live
+ * inspection -- a station quietly showing fake results would be far worse
+ * than one that is obviously a demo.
+ * ------------------------------------------------------------------------ */
+
+.demo-bar {
+  margin-top: 14px; padding: 12px 14px; border-radius: 10px;
+  background: linear-gradient(90deg, #2a2216, #1e2128 60%);
+  border: 1px solid #5c4715;
+}
+.demo-label { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.demo-chip {
+  font-size: 11px; font-weight: 700; letter-spacing: 0.1em;
+  color: #16181d; background: var(--warn); padding: 3px 8px; border-radius: 4px;
+}
+.demo-hint { font-size: 12px; color: var(--muted); }
+.demo-boards { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.demo-board {
+  background: var(--panel); color: var(--muted); border: 1px solid var(--border);
+  border-radius: 6px; padding: 6px 11px; font-size: 12px; cursor: pointer;
+}
+.demo-board:hover:not(:disabled) { color: var(--text); border-color: var(--warn); }
+.demo-board.active { color: #16181d; background: var(--warn); border-color: var(--warn); font-weight: 600; }
+.demo-board:disabled { opacity: 0.5; cursor: not-allowed; }
+.demo-current { margin: 8px 0 0; font-size: 12px; color: var(--muted); font-style: italic; }
+
+/* ---------------------------------------------------------------------------
+ * Verdict card
+ * ------------------------------------------------------------------------ */
+
+.verdict-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.verdict-mark { font-size: 26px; line-height: 1; }
+.verdict-idle { background: var(--panel); }
+.verdict-idle .verdict-word { color: var(--muted); font-size: 22px; }
+.verdict-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 9px; }
+.tag {
+  font-size: 11px; color: var(--muted); background: rgba(255,255,255,0.04);
+  border: 1px solid var(--border); border-radius: 4px; padding: 2px 7px;
+}
+.tag-warn { color: var(--warn); border-color: #5c4715; }
+
+/* ---------------------------------------------------------------------------
+ * Trigger — oversized because the operator hits it hundreds of times a shift,
+ * often without looking away from the board.
+ * ------------------------------------------------------------------------ */
+
+.trigger { display: flex; align-items: center; justify-content: center; gap: 10px; }
+.trigger kbd {
+  font-size: 11px; font-family: ui-monospace, Menlo, monospace;
+  background: rgba(0,0,0,0.25); border: 1px solid rgba(255,255,255,0.25);
+  border-radius: 4px; padding: 2px 6px; font-weight: 500;
+}
+
+/* ---------------------------------------------------------------------------
+ * Tabs
+ * ------------------------------------------------------------------------ */
+
+.tabs { display: flex; gap: 4px; margin: 18px 0 10px; border-bottom: 1px solid var(--border); }
+.tabs button {
+  background: none; border: none; border-bottom: 2px solid transparent;
+  color: var(--muted); padding: 8px 12px; font-size: 13px; cursor: pointer;
+}
+.tabs button:hover { color: var(--text); }
+.tabs button.active { color: var(--text); border-bottom-color: var(--accent); }
+
+/* ---------------------------------------------------------------------------
+ * Defect list
+ * Dismissed rows stay visible, greyed, rather than disappearing: the record
+ * is append-only and the screen should reflect that. A dismissal is a
+ * judgement someone made, not an erasure.
+ * ------------------------------------------------------------------------ */
+
+.defect-list li { flex-direction: column; align-items: stretch; gap: 0; padding: 0; overflow: hidden; }
+.defect-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 12px; }
+.defect-main {
+  display: flex; flex-direction: column; gap: 2px; min-width: 0;
+  background: none; border: none; padding: 0; text-align: left; cursor: pointer; color: inherit;
+}
+.defect-main:hover .defect-name { color: var(--accent); }
+.defect-crop {
+  display: block; width: 100%; border-top: 1px solid var(--border);
+  image-rendering: pixelated; background: #000;
+}
+
+/* ---------------------------------------------------------------------------
+ * History — the traceability claim made visible. An MSME's current answer to
+ * "what did you check?" is a signature on a sheet; this replaces it.
+ * ------------------------------------------------------------------------ */
+
+.history-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.history-row {
+  width: 100%; display: flex; align-items: center; gap: 10px;
+  background: var(--panel); border: 1px solid var(--border); border-radius: 7px;
+  padding: 9px 11px; cursor: pointer; color: var(--text); text-align: left;
+}
+.history-row:hover { border-color: var(--accent); }
+.history-verdict {
+  font-size: 10px; font-weight: 700; letter-spacing: 0.06em;
+  padding: 3px 7px; border-radius: 4px; flex-shrink: 0;
+}
+.history-pass { color: var(--pass); background: #14261a; }
+.history-fail { color: var(--fail); background: #2a1618; }
+.history-detail { display: flex; flex-direction: column; gap: 1px; flex: 1; min-width: 0; }
+.history-id { font-family: ui-monospace, Menlo, monospace; font-size: 12px; }
+.history-time { font-size: 11px; color: var(--muted); }
+.history-count { font-size: 11px; color: var(--muted); flex-shrink: 0; }
+
+/* Defect class badge. The class is what makes a finding actionable --
+ * "C14 missing" tells a rework technician what to do, "C14 differs" does not. */
+.defect-class {
+  display: inline-block; margin-left: 7px; font-size: 10px; font-weight: 700;
+  letter-spacing: 0.06em; text-transform: uppercase; padding: 2px 6px;
+  border-radius: 4px; vertical-align: middle;
+}
+.class-absent  { color: #ffb4b6; background: #4a1f21; }
+.class-rotated { color: #ffd9a0; background: #4a3717; }
+.class-offset  { color: #a8d5ff; background: #1d3550; }
+.class-unknown { color: var(--muted); background: #2a2d35; }
+.defect-detail {
+  display: block; margin-top: 4px; font-size: 11px; color: var(--muted);
+  line-height: 1.35; white-space: normal;
+}
+
+/* Recurring defects. Rates carry more meaning than counts here -- "C14 failed
+ * 12 times" says nothing without knowing whether that was 15 boards or 1500. */
+.trends-summary { font-size: 12px; color: var(--muted); margin: 0 0 12px; }
+.trends-summary strong { color: var(--text); }
+.trend-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 12px; }
+.trend-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.trend-name { font-family: ui-monospace, Menlo, monospace; font-size: 13px; font-weight: 600; }
+.trend-rate { font-size: 12px; color: var(--text); }
+.trend-count { color: var(--muted); }
+.trend-bar { height: 6px; background: var(--panel); border-radius: 3px; overflow: hidden; margin-top: 5px; }
+.trend-fill { height: 100%; background: linear-gradient(90deg, var(--fail), #ff8a5c); border-radius: 3px; }
+.trend-classes { display: block; margin-top: 5px; font-size: 11px; color: var(--muted); }
+
+/* Settings. Threshold tuning is exposed because retuning without a rebuild is
+ * an architectural driver (NFR-013), and demonstrating it is far more
+ * convincing than asserting it. */
+.settings { display: flex; flex-direction: column; gap: 22px; }
+.settings h3 {
+  font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em;
+  color: var(--muted); margin: 0 0 8px;
+}
+.settings-note { font-size: 11px; color: var(--muted); line-height: 1.45; margin: 0 0 12px; }
+.setting-row {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  gap: 12px; padding: 9px 0; border-bottom: 1px solid var(--border);
+}
+.setting-label { display: flex; flex-direction: column; gap: 3px; font-size: 12px; flex: 1; }
+.setting-hint { font-size: 10px; color: var(--muted); line-height: 1.4; }
+.setting-row input {
+  width: 82px; flex-shrink: 0; background: var(--panel); color: var(--text);
+  border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px;
+  font-size: 13px; font-family: ui-monospace, Menlo, monospace;
+}
+.setting-row input:focus { outline: none; border-color: var(--accent); }
+.settings-save {
+  margin-top: 12px; width: 100%; padding: 9px; font-size: 13px;
+  background: var(--accent); color: #fff; border: none; border-radius: 7px; cursor: pointer;
+}
+.settings-save:disabled { background: var(--panel); color: var(--muted); cursor: not-allowed; }
+.settings section > button {
+  background: var(--panel); color: var(--text); border: 1px solid var(--border);
+  border-radius: 7px; padding: 8px 12px; font-size: 13px; cursor: pointer;
+}
+.settings section > button:hover:not(:disabled) { border-color: var(--accent); }
+.settings-facts { margin: 0 0 12px; display: flex; flex-direction: column; gap: 6px; }
+.settings-facts > div { display: flex; justify-content: space-between; gap: 10px; font-size: 12px; }
+.settings-facts dt { color: var(--muted); margin: 0; }
+.settings-facts dd { margin: 0; font-family: ui-monospace, Menlo, monospace; }
+.settings-list { margin: 0; padding-left: 16px; display: flex; flex-direction: column; gap: 8px; }
+.settings-list li { font-size: 11px; color: var(--muted); line-height: 1.5; }
+.settings-list strong { color: var(--text); font-weight: 600; }
+
+/* Threshold advisory. Distinct from banner-info because it means real defects
+ * may be going unreported -- a recall risk, not a routine notice. */
+.banner-warn {
+  background: #2a2216; border: 1px solid #5c4715; color: #ffd9a0;
+  line-height: 1.45;
+}

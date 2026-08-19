@@ -15,18 +15,26 @@ condition that would restore the full behaviour.
 
 | Module | Covers | Doc reference |
 |---|---|---|
-| `gerbereye/config.py` | App config, threshold seed values | architecture.md §6 |
-| `gerbereye/db.py` | SQLite schema, append-only verdicts | system-model.md §1 |
+| `gerbereye/config.py` | App config, threshold seeds, retention window | architecture.md §6 |
+| `gerbereye/db.py` | SQLite schema, append-only verdicts, trend queries | system-model.md §1 |
 | `gerbereye/capture.py` | Locked exposure/focus/WB, stability check | FR-006, AC-006.2 |
+| `gerbereye/demo.py` | Hardware-free demo camera | RSK-07 contingency |
+| `gerbereye/logging_setup.py` | JSON-lines logging, stage timers | FR-027 |
+| `gerbereye/retention.py` | Image retention sweep | FR-024, NFR-002 |
 | `gerbereye/pipeline/differencing.py` | Golden-board differencing (Path A) | FR-015, ADR-002 |
 | `gerbereye/pipeline/verdict.py` | Board pass/fail | BR-06 |
-| `gerbereye/pipeline/placement.py` | Pick-and-place parsing | FR-001, BR-01, BR-02 |
-| `gerbereye/pipeline/registration.py` | ArUco homography, region naming | FR-007, FR-008, NFR-006 |
+| `gerbereye/pipeline/placement.py` | Pick-and-place parsing, DNP hints | FR-001, FR-002, BR-01, BR-02 |
+| `gerbereye/pipeline/bom.py` | BOM parsing, do-not-populate exclusion | FR-002 |
+| `gerbereye/pipeline/footprints.py` | Package dimensions | BR-03 |
+| `gerbereye/pipeline/registration.py` | ArUco homography, naming, fragment merge | FR-007, FR-008, NFR-006 |
+| `gerbereye/pipeline/classify.py` | Defect classification | FR-012, FR-013, FR-014 |
 | `gerbereye/inspector.py` | Orchestration, path precedence | FR-015 AC-015.4 |
-| `gerbereye/api.py` | HTTP API, MJPEG stream | IF-05, NFR-011 |
+| `gerbereye/api.py` | HTTP API, MJPEG stream, crops | IF-05, NFR-011 |
 | `gerbereye/export.py` | CSV export — **stub, issue #16** | FR-022 |
-| `web/` | Operator UI, overlay, override | FR-018, FR-019, FR-020 |
-| `tools/` | Bench scripts for the hardware tasks | FR-006, RSK-02, RSK-03 |
+| `web/` | Operator UI, overlay, override, history, trends | FR-018–FR-020, FR-023 |
+| `tools/` | Bench scripts, demo generator, benchmarks | FR-006, RSK-02, RSK-03 |
+
+**Tests:** 108 passing, 6 failing by design (the #16 export stubs).
 
 ---
 
@@ -50,9 +58,13 @@ be the common case for the boards actually in hand.
 detector for them. The `detect_markers()` seam takes any `{id: centre}` mapping,
 so swapping the detector needs no change downstream.
 
-### 2.2 Region-level differencing rather than per-component classification
+### 2.2 Region-level differencing rather than per-component classification — RESOLVED
 
-**Narrows:** FR-012, FR-013, FR-014 (presence, placement, orientation classes). **Tracked by:** #37
+**Was:** FR-012, FR-013, FR-014. **Closed by:** #37
+
+> Findings now carry a class (`absent` / `rotated` / `offset` / `present`) and
+> the measurement behind it, via template matching against the golden board
+> (`pipeline/classify.py`). Costs ~2ms per classified component.
 
 The docs describe classical-feature classification per component ROI, producing
 `present / absent / misaligned / rotated / polarity-reversed`. The MVP reports
@@ -77,9 +89,14 @@ confidence to threshold, so the verdict is binary.
 
 **Restore condition:** follows 2.2 directly.
 
-### 2.4 Nominal component box size
+### 2.4 Nominal component box size — RESOLVED
 
-**Narrows:** BR-03 (ROI = footprint extent × 1.20). **Tracked by:** #36
+**Was:** BR-03 (ROI = footprint extent × 1.20). **Closed by:** #36
+
+> Components are now sized from a real package table (`pipeline/footprints.py`),
+> 19/19 matched on the demo board. Region attribution also moved from
+> centre-in-box to overlap area, because an offset part produces a region whose
+> centre sits outside its own footprint.
 
 Package dimensions are not in the pick-and-place file, and parsing footprint
 libraries was not affordable in the runway. Every component currently gets the
@@ -92,9 +109,15 @@ resolves ties by nearest centre, which is defensible but not exact.
 **Restore condition:** parse footprint extents from the Gerber or a footprint
 library, then feed real per-component dimensions into `project_components()`.
 
-### 2.5 DNP exclusion and polarity classing not implemented
+### 2.5 Polarity classing not implemented
 
-**Narrows:** FR-002, FR-003. **Tracked by:** #31 — the highest-risk item in this document
+**Narrows:** FR-003. **Tracked by:** #37
+
+> **RESOLVED for FR-002 (2026-08-18).** DNP exclusion is implemented — see
+> `gerbereye/pipeline/bom.py`. BOM ingestion marks do-not-populate designators,
+> `list_components()` filters them by default, and no projected box is created
+> for them, so no defect can carry their designator. Only polarity classing
+> (FR-003) remains outstanding.
 
 Both need BOM data the MVP does not ingest. **This is the one departure with a
 live false-call risk**: a do-not-populate designator sits empty on every board,
@@ -109,34 +132,36 @@ CAD path runs against a board type whose golden reference is missing.
 **Restore condition:** ingest the BOM, filter DNP designators out of the
 component map at load time.
 
-### 2.6 No latency instrumentation
+### 2.6 Latency measured only in demo mode
 
-**Narrows:** NFR-001 (p95 ≤ 5.0s, instrumented over 200 inspections). **Tracked by:** #38, needs #33
+**Narrows:** NFR-001. **Tracked by:** #38
 
-Per-stage timing is not recorded. A synthetic benchmark (1080p, 250 components)
-puts the diff path at **134 ms against a 5 000 ms budget** — roughly 37x
-headroom, with ECC alignment accounting for 119 ms of it and clearly earning
-its cost (a 6 px board shift produces 34 false regions without it, 0 with it).
+Per-stage timers now exist (#33) and `tools/bench_latency.py` reports the
+histogram the requirement asks for. What is missing is a run on real hardware.
 
-That figure excludes camera capture, JPEG encode, HTTP round-trip and browser
-render, and it ran on a synthetic image. **It is not an NFR-001 result and must
-not be quoted as one.**
+Demo-mode run over 100 inspections: **p95 114 ms, p99 117 ms** against a
+5 000 ms budget, with classification costing ~2 ms per flagged component.
+
+That figure reads bundled images rather than a camera, and excludes browser
+render and network. **It is not an NFR-001 result and must not be quoted as
+one** — it verifies the harness and catches regressions. The real number needs
+the reference bench and a real camera (#2, #3).
 
 **Restore condition:** add per-stage timers in `inspector.run_inspection()` and
 log them; the structured-logging requirement (FR-027) is also outstanding.
 
-### 2.7 No structured logging
+### 2.7 No structured logging — RESOLVED
 
-**Narrows:** FR-027. **Tracked by:** #33
+**Was:** FR-027. **Closed by:** #33
 
 No module imports `logging`. The three diagnostic fields the requirement names —
 `registration_residual_px`, per-stage duration, component count — are all
 uncaptured, so a latency regression and an accuracy regression are
 indistinguishable from the outside.
 
-### 2.8 No retention sweep
+### 2.8 No retention sweep — RESOLVED
 
-**Narrows:** FR-024, NFR-002. **Tracked by:** #34
+**Was:** FR-024, NFR-002. **Closed by:** #34
 
 Every trigger writes a JPEG and nothing deletes them. Low urgency for an
 eight-hour round, real for a shop floor running 100+ boards a shift.

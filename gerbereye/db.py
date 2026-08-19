@@ -24,7 +24,7 @@ from typing import Any, Iterable
 
 from . import config
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 3
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS schema_meta (
@@ -68,6 +68,10 @@ CREATE TABLE IF NOT EXISTS component (
     rotation_deg  REAL    NOT NULL,
     side          TEXT    NOT NULL,
     footprint     TEXT,
+    -- Do-not-populate: present in the design, deliberately empty on every
+    -- assembled board. Must never be inspected (FR-002) -- reporting one as
+    -- absent is a guaranteed false call on every board of this type.
+    dnp           INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (board_type_id, ref_des)
 );
 
@@ -85,7 +89,13 @@ CREATE TABLE IF NOT EXISTS region_verdict (
     inspection_id INTEGER NOT NULL REFERENCES inspection(id),
     bbox_json     TEXT    NOT NULL,
     ref_des       TEXT,
-    area_px       INTEGER NOT NULL
+    area_px       INTEGER NOT NULL,
+    -- What is wrong with the component, not merely that something is
+    -- (FR-012/013/014). Null on the differencing-only path, which has no
+    -- reference geometry to classify against.
+    defect_class  TEXT,
+    confidence    REAL,
+    detail        TEXT
 );
 
 -- A correction is a new row here. The original region_verdict is never edited.
@@ -113,12 +123,38 @@ def connect() -> sqlite3.Connection:
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
     conn.executescript(SCHEMA)
+    _migrate(conn)
     conn.execute(
         "INSERT OR IGNORE INTO schema_meta (key, value) VALUES ('schema_version', ?)",
         (str(SCHEMA_VERSION),),
     )
     conn.commit()
     return conn
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    """Bring an existing database up to the current schema.
+
+    `CREATE TABLE IF NOT EXISTS` is a no-op on a database that already has the
+    table, so a column added after the first release needs an explicit ALTER.
+    Migrations are forward-only and additive -- an existing inspection record
+    must survive an upgrade untouched (NFR-012).
+    """
+    existing = {row["name"] for row in conn.execute("PRAGMA table_info(component)")}
+    if existing and "dnp" not in existing:
+        conn.execute("ALTER TABLE component ADD COLUMN dnp INTEGER NOT NULL DEFAULT 0")
+        conn.commit()
+
+    verdict_columns = {row["name"] for row in conn.execute("PRAGMA table_info(region_verdict)")}
+    if verdict_columns:
+        for column, ddl in (
+            ("defect_class", "ALTER TABLE region_verdict ADD COLUMN defect_class TEXT"),
+            ("confidence", "ALTER TABLE region_verdict ADD COLUMN confidence REAL"),
+            ("detail", "ALTER TABLE region_verdict ADD COLUMN detail TEXT"),
+        ):
+            if column not in verdict_columns:
+                conn.execute(ddl)
+        conn.commit()
 
 
 # --------------------------------------------------------------------------
@@ -152,7 +188,8 @@ def get_or_create_board_type(conn: sqlite3.Connection, name: str) -> int:
 def list_board_types(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     rows = conn.execute(
         "SELECT b.id, b.name, b.created_at,"
-        "       (SELECT COUNT(*) FROM component c WHERE c.board_type_id = b.id) AS component_count,"
+        "       (SELECT COUNT(*) FROM component c WHERE c.board_type_id = b.id AND c.dnp = 0) AS component_count,"
+        "       (SELECT COUNT(*) FROM component c WHERE c.board_type_id = b.id AND c.dnp = 1) AS dnp_count,"
         "       (SELECT COUNT(*) FROM golden_reference g WHERE g.board_type_id = b.id) AS golden_count"
         " FROM board_type b ORDER BY b.id"
     ).fetchall()
@@ -229,25 +266,57 @@ def replace_components(
             c.get("rotation_deg", 0.0),
             c.get("side", "top"),
             c.get("footprint"),
+            1 if c.get("dnp") else 0,
         )
         for c in components
     ]
     conn.executemany(
         "INSERT INTO component (board_type_id, ref_des, x_mm, y_mm, rotation_deg,"
-        " side, footprint) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        " side, footprint, dnp) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         rows,
     )
     conn.commit()
     return len(rows)
 
 
-def list_components(conn: sqlite3.Connection, board_type_id: int) -> list[dict[str, Any]]:
-    rows = conn.execute(
-        "SELECT ref_des, x_mm, y_mm, rotation_deg, side, footprint"
-        " FROM component WHERE board_type_id = ? ORDER BY ref_des",
-        (board_type_id,),
-    ).fetchall()
+def list_components(
+    conn: sqlite3.Connection, board_type_id: int, include_dnp: bool = False
+) -> list[dict[str, Any]]:
+    """Components for a board type.
+
+    DNP designators are excluded by default and every inspection path uses that
+    default. They are only ever returned when a caller explicitly asks -- e.g.
+    the setup screen showing the technician what was excluded (AC-002.2).
+    """
+    query = (
+        "SELECT ref_des, x_mm, y_mm, rotation_deg, side, footprint, dnp"
+        " FROM component WHERE board_type_id = ?"
+    )
+    if not include_dnp:
+        query += " AND dnp = 0"
+    rows = conn.execute(query + " ORDER BY ref_des", (board_type_id,)).fetchall()
     return [dict(r) for r in rows]
+
+
+def set_dnp(conn: sqlite3.Connection, board_type_id: int, designators: set[str]) -> int:
+    """Flag the given designators do-not-populate. Returns how many matched."""
+    if not designators:
+        return 0
+    placeholders = ",".join("?" for _ in designators)
+    cur = conn.execute(
+        f"UPDATE component SET dnp = 1 WHERE board_type_id = ? AND ref_des IN ({placeholders})",
+        (board_type_id, *designators),
+    )
+    conn.commit()
+    return cur.rowcount
+
+
+def count_dnp(conn: sqlite3.Connection, board_type_id: int) -> int:
+    row = conn.execute(
+        "SELECT COUNT(*) AS n FROM component WHERE board_type_id = ? AND dnp = 1",
+        (board_type_id,),
+    ).fetchone()
+    return int(row["n"])
 
 
 # --------------------------------------------------------------------------
@@ -274,10 +343,18 @@ def record_inspection(
     )
     inspection_id = int(cur.lastrowid)
     conn.executemany(
-        "INSERT INTO region_verdict (inspection_id, bbox_json, ref_des, area_px)"
-        " VALUES (?, ?, ?, ?)",
+        "INSERT INTO region_verdict (inspection_id, bbox_json, ref_des, area_px,"
+        " defect_class, confidence, detail) VALUES (?, ?, ?, ?, ?, ?, ?)",
         [
-            (inspection_id, json.dumps(r["bbox"]), r.get("ref_des"), int(r["area_px"]))
+            (
+                inspection_id,
+                json.dumps(r["bbox"]),
+                r.get("ref_des"),
+                int(r["area_px"]),
+                r.get("defect_class"),
+                r.get("confidence"),
+                r.get("detail"),
+            )
             for r in regions
         ],
     )
@@ -302,7 +379,8 @@ def list_regions(conn: sqlite3.Connection, inspection_id: int) -> list[dict[str,
     while still letting callers read current state in one hop.
     """
     rows = conn.execute(
-        "SELECT r.id, r.bbox_json, r.ref_des, r.area_px,"
+        "SELECT r.id, r.bbox_json, r.ref_des, r.area_px, r.defect_class,"
+        "       r.confidence, r.detail,"
         "       (SELECT o.revised_verdict FROM override o"
         "         WHERE o.region_verdict_id = r.id ORDER BY o.id DESC LIMIT 1) AS revised"
         " FROM region_verdict r WHERE r.inspection_id = ? ORDER BY r.id",
@@ -316,6 +394,9 @@ def list_regions(conn: sqlite3.Connection, inspection_id: int) -> list[dict[str,
                 "bbox": json.loads(r["bbox_json"]),
                 "ref_des": r["ref_des"],
                 "area_px": r["area_px"],
+                "defect_class": r["defect_class"],
+                "confidence": r["confidence"],
+                "detail": r["detail"],
                 "verdict": r["revised"] or "defect",
                 "overridden": r["revised"] is not None,
             }
@@ -333,6 +414,81 @@ def list_inspections(conn: sqlite3.Connection, limit: int = 100) -> list[dict[st
         (limit,),
     ).fetchall()
     return [dict(r) for r in rows]
+
+
+def defect_trends(
+    conn: sqlite3.Connection,
+    board_type_id: int | None = None,
+    since: str | None = None,
+    limit: int = 25,
+) -> dict[str, Any]:
+    """Recurring defects, grouped by reference designator.
+
+    This is what turns the station from a detector into something that improves
+    the line. A single missing C14 is a rework job; C14 missing on 40% of
+    boards is a feeder problem, and only the aggregate makes that visible.
+
+    Overridden regions are excluded from the counts. An operator dismissing a
+    call is saying the board was fine, so counting it would let a noisy
+    threshold masquerade as a process fault -- and the whole point of this view
+    is to decide where to spend engineering effort.
+    """
+    filters = ["o.id IS NULL", "r.ref_des IS NOT NULL"]
+    params: list[Any] = []
+    if board_type_id is not None:
+        filters.append("i.board_type_id = ?")
+        params.append(board_type_id)
+    if since:
+        filters.append("i.started_at >= ?")
+        params.append(since)
+    where = " AND ".join(filters)
+
+    rows = conn.execute(
+        "SELECT r.ref_des,"
+        "       COUNT(*) AS occurrences,"
+        "       SUM(CASE WHEN r.defect_class = 'absent'  THEN 1 ELSE 0 END) AS absent,"
+        "       SUM(CASE WHEN r.defect_class = 'rotated' THEN 1 ELSE 0 END) AS rotated,"
+        "       SUM(CASE WHEN r.defect_class = 'offset'  THEN 1 ELSE 0 END) AS offset_count,"
+        "       SUM(CASE WHEN r.defect_class IS NULL OR r.defect_class"
+        "                IN ('present','unknown') THEN 1 ELSE 0 END) AS unclassified"
+        " FROM region_verdict r"
+        " JOIN inspection i ON i.id = r.inspection_id"
+        " LEFT JOIN override o ON o.region_verdict_id = r.id"
+        f" WHERE {where}"
+        " GROUP BY r.ref_des"
+        " ORDER BY occurrences DESC, r.ref_des"
+        " LIMIT ?",
+        (*params, limit),
+    ).fetchall()
+
+    # Inspection total for the same window, so a count can be read as a rate.
+    # "C14 failed 12 times" means nothing without knowing whether that is out
+    # of 15 boards or 1500.
+    total_filters = []
+    total_params: list[Any] = []
+    if board_type_id is not None:
+        total_filters.append("board_type_id = ?")
+        total_params.append(board_type_id)
+    if since:
+        total_filters.append("started_at >= ?")
+        total_params.append(since)
+    total_where = (" WHERE " + " AND ".join(total_filters)) if total_filters else ""
+    total = conn.execute(
+        f"SELECT COUNT(*) AS n FROM inspection{total_where}", tuple(total_params)
+    ).fetchone()["n"]
+
+    designators = []
+    for row in rows:
+        entry = dict(row)
+        entry["offset"] = entry.pop("offset_count")
+        entry["rate"] = round(entry["occurrences"] / total, 4) if total else 0.0
+        designators.append(entry)
+
+    return {
+        "board_type_id": board_type_id,
+        "inspections": total,
+        "designators": designators,
+    }
 
 
 def add_override(

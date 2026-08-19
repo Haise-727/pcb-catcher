@@ -45,6 +45,12 @@ export const uploadPlacement = (boardTypeId, content) =>
     body: JSON.stringify({ board_type_id: boardTypeId, content }),
   })
 
+export const uploadBom = (boardTypeId, content) =>
+  request('/api/board-types/bom', {
+    method: 'POST',
+    body: JSON.stringify({ board_type_id: boardTypeId, content }),
+  })
+
 export const trigger = (boardTypeId) =>
   request(`/api/trigger?board_type_id=${boardTypeId}`, { method: 'POST' })
 
@@ -56,6 +62,37 @@ export const overrideRegion = (regionVerdictId) =>
     method: 'POST',
     body: JSON.stringify({ region_verdict_id: regionVerdictId, revised_verdict: 'false_call' }),
   })
+
+export const regionCropUrl = (inspectionId, regionId) =>
+  `${BASE}/api/inspections/${inspectionId}/regions/${regionId}.jpg`
+
+export const selectDemoBoard = (index) =>
+  request(`/api/demo/board?index=${index}`, { method: 'POST' })
+
+export const nextDemoBoard = () => request('/api/demo/next-board', { method: 'POST' })
+
+export const getInspection = (id) => request(`/api/inspections/${id}`)
+
+export const getTrends = (boardTypeId, limit = 12) =>
+  request(`/api/trends?board_type_id=${boardTypeId}&limit=${limit}`)
+
+export const getThresholds = (boardTypeId) =>
+  request(`/api/board-types/${boardTypeId}/thresholds`)
+
+export const updateThresholds = (boardTypeId, values) =>
+  request('/api/board-types/thresholds', {
+    method: 'PATCH',
+    body: JSON.stringify({
+      board_type_id: boardTypeId,
+      diff_intensity: Number(values.diff_intensity),
+      min_region_area: Number(values.min_region_area),
+      blur_kernel: Number(values.blur_kernel),
+      roi_scale: Number(values.roi_scale),
+    }),
+  })
+
+export const getStorage = () => request('/api/storage')
+export const sweepStorage = () => request('/api/storage/sweep', { method: 'POST' })
 
 export const checkStability = (samples = 50) =>
   request(`/api/camera/stability?samples=${samples}`)
