@@ -149,6 +149,21 @@ body {
 .demo-board:disabled { opacity: 0.5; cursor: not-allowed; }
 .demo-current { margin: 8px 0 0; font-size: 12px; color: var(--muted); font-style: italic; }
 
+/* Bench-condition row. Separated by a rule because it controls something
+ * different from the board picker: not what is under the camera, but what the
+ * camera and the light are doing. A degraded profile is tinted red so nobody
+ * mistakes a deliberately broken bench for the working one. */
+.demo-bench { margin-top: 12px; padding-top: 10px; border-top: 1px dashed #5c4715; }
+.demo-bench-label {
+  font-size: 11px; font-weight: 600; letter-spacing: 0.06em;
+  text-transform: uppercase; color: var(--muted);
+}
+.demo-board-degraded { border-color: #6b2d2d; }
+.demo-board-degraded:hover:not(:disabled) { border-color: var(--fail); color: var(--fail); }
+.demo-board-degraded.active {
+  background: var(--fail); border-color: var(--fail); color: #16181d;
+}
+
 /* ---------------------------------------------------------------------------
  * Verdict card
  * ------------------------------------------------------------------------ */
